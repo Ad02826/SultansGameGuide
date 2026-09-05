@@ -71,5 +71,10 @@
       <HintPath>lib/interop/UnityEngine.UIModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
+
+    <Reference Include="Game">
+      <HintPath>lib/interop/Game.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 </Project>
