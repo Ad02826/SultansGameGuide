@@ -85,5 +85,10 @@
       <HintPath>lib/interop/Il2CppSystem.Core.dll</HintPath>
       <Private>false</Private>
     </Reference>
+
+    <Reference Include="Common">
+      <HintPath>lib/interop/Common.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 </Project>
