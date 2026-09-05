@@ -49,6 +49,9 @@ public sealed class GuideOverlay : MonoBehaviour
 
     private static readonly Stack<int> _history = new();
 
+    // 右侧详情区的滚动位置
+    private static Vector2 _detailScroll = Vector2.zero;
+
     private static Rect _panel =
         new Rect(26, 70, 940, 710);
 
@@ -643,6 +646,9 @@ public sealed class GuideOverlay : MonoBehaviour
                     _selectedId =
                         first;
 
+                    _detailScroll =
+                        Vector2.zero;
+
                     _history.Clear();
                 }
             }
@@ -715,7 +721,7 @@ public sealed class GuideOverlay : MonoBehaviour
                 330,
                 22
             ),
-            "v0.4.4 · 不透明界面",
+            "v0.4.5 · 右栏可滚动",
             _small
         );
 
@@ -1382,15 +1388,165 @@ public sealed class GuideOverlay : MonoBehaviour
             return;
         }
 
+        // 先估算整个右侧详情所需高度，
+        // 再创建一个真正的垂直 ScrollView。
+        string condition =
+            string.IsNullOrWhiteSpace(
+                node.HumanCondition
+            )
+                ?
+                "没有额外要求。"
+                :
+                node.HumanCondition;
+
+        float conditionHeight =
+            EstimateTextHeight(
+                condition,
+                58,
+                220
+            );
+
+        float outcomeHeight =
+            0f;
+
+        if (
+            !string.IsNullOrWhiteSpace(
+                node.HumanOutcome
+            )
+        )
+        {
+            outcomeHeight =
+                EstimateTextHeight(
+                    node.HumanOutcome,
+                    52,
+                    180
+                );
+        }
+
+        string result =
+            node.ResultText
+            ??
+            "";
+
+        // 有滚动以后，不需要像以前那样过早截断。
+        // 仍设置一个较高上限，避免极端配置让单个节点无限拉长。
+        if (
+            result.Length
+            >
+            3500
+        )
+        {
+            result =
+                result[..3500]
+                +
+                "\n……";
+        }
+
+        float resultHeight =
+            0f;
+
+        if (
+            !string.IsNullOrWhiteSpace(
+                result
+            )
+        )
+        {
+            resultHeight =
+                EstimateTextHeight(
+                    result,
+                    70,
+                    620
+                );
+        }
+
+        int linkCount =
+            node.Links.Count;
+
+        float contentHeight =
+            62f                         // 标题
+            +
+            27f + conditionHeight + 16f
+            +
+            (
+                outcomeHeight > 0
+                    ?
+                    27f + outcomeHeight + 16f
+                    :
+                    0f
+            )
+            +
+            (
+                resultHeight > 0
+                    ?
+                    27f + resultHeight + 16f
+                    :
+                    0f
+            )
+            +
+            30f
+            +
+            Math.Max(
+                1,
+                linkCount
+            )
+            *
+            50f
+            +
+            40f;
+
+        float viewWidth =
+            Math.Max(
+                100f,
+                w - 22f
+            );
+
+        float viewHeight =
+            Math.Max(
+                h,
+                contentHeight
+            );
+
+        var scrollRect =
+            new Rect(
+                x,
+                y,
+                w,
+                h
+            );
+
+        var viewRect =
+            new Rect(
+                0,
+                0,
+                viewWidth,
+                viewHeight
+            );
+
+        _detailScroll =
+            GUI.BeginScrollView(
+                scrollRect,
+                _detailScroll,
+                viewRect
+            );
+
+        // ScrollView 内部使用相对坐标。
+        float localX =
+            6f;
+
+        float localW =
+            viewWidth
+            -
+            12f;
+
         float cy =
-            y;
+            4f;
 
         if (
             _history.Count > 0
             &&
             GUI.Button(
                 new Rect(
-                    x,
+                    localX,
                     cy,
                     70,
                     26
@@ -1401,6 +1557,11 @@ public sealed class GuideOverlay : MonoBehaviour
         {
             _selectedId =
                 _history.Pop();
+
+            _detailScroll =
+                Vector2.zero;
+
+            GUI.EndScrollView();
 
             return;
         }
@@ -1416,23 +1577,26 @@ public sealed class GuideOverlay : MonoBehaviour
 
         GUI.Label(
             new Rect(
-                x + 80,
+                localX + 80,
                 cy,
-                w - 80,
-                34
+                localW - 80,
+                38
             ),
             $"{stateTag}{KindName(node.Kind)} · {node.Name}",
             _title
         );
 
         cy +=
-            48;
+            50f;
 
+        // =========================
+        // 怎么触发
+        // =========================
         GUI.Label(
             new Rect(
-                x,
+                localX,
                 cy,
-                w,
+                localW,
                 24
             ),
             "怎么触发？",
@@ -1440,29 +1604,13 @@ public sealed class GuideOverlay : MonoBehaviour
         );
 
         cy +=
-            27;
-
-        string condition =
-            string.IsNullOrWhiteSpace(
-                node.HumanCondition
-            )
-                ?
-                "没有额外要求。"
-                :
-                node.HumanCondition;
-
-        float conditionHeight =
-            EstimateTextHeight(
-                condition,
-                58,
-                190
-            );
+            27f;
 
         GUI.Box(
             new Rect(
-                x,
+                localX,
                 cy,
-                w,
+                localW,
                 conditionHeight
             ),
             ""
@@ -1470,9 +1618,9 @@ public sealed class GuideOverlay : MonoBehaviour
 
         GUI.Label(
             new Rect(
-                x + 9,
+                localX + 9,
                 cy + 7,
-                w - 18,
+                localW - 18,
                 conditionHeight - 14
             ),
             condition,
@@ -1482,19 +1630,20 @@ public sealed class GuideOverlay : MonoBehaviour
         cy +=
             conditionHeight
             +
-            12;
+            14f;
 
+        // =========================
+        // 接下来会怎样
+        // =========================
         if (
-            !string.IsNullOrWhiteSpace(
-                node.HumanOutcome
-            )
+            outcomeHeight > 0
         )
         {
             GUI.Label(
                 new Rect(
-                    x,
+                    localX,
                     cy,
-                    w,
+                    localW,
                     24
                 ),
                 "接下来会怎样？",
@@ -1502,20 +1651,13 @@ public sealed class GuideOverlay : MonoBehaviour
             );
 
             cy +=
-                27;
-
-            float outcomeHeight =
-                EstimateTextHeight(
-                    node.HumanOutcome,
-                    52,
-                    135
-                );
+                27f;
 
             GUI.Box(
                 new Rect(
-                    x,
+                    localX,
                     cy,
-                    w,
+                    localW,
                     outcomeHeight
                 ),
                 ""
@@ -1523,9 +1665,9 @@ public sealed class GuideOverlay : MonoBehaviour
 
             GUI.Label(
                 new Rect(
-                    x + 9,
+                    localX + 9,
                     cy + 7,
-                    w - 18,
+                    localW - 18,
                     outcomeHeight - 14
                 ),
                 node.HumanOutcome,
@@ -1535,20 +1677,21 @@ public sealed class GuideOverlay : MonoBehaviour
             cy +=
                 outcomeHeight
                 +
-                12;
+                14f;
         }
 
+        // =========================
+        // 结局说明
+        // =========================
         if (
-            !string.IsNullOrWhiteSpace(
-                node.ResultText
-            )
+            resultHeight > 0
         )
         {
             GUI.Label(
                 new Rect(
-                    x,
+                    localX,
                     cy,
-                    w,
+                    localW,
                     24
                 ),
                 "结局说明",
@@ -1556,35 +1699,13 @@ public sealed class GuideOverlay : MonoBehaviour
             );
 
             cy +=
-                27;
-
-            string result =
-                node.ResultText!;
-
-            if (
-                result.Length
-                >
-                700
-            )
-            {
-                result =
-                    result[..700]
-                    +
-                    "\n……";
-            }
-
-            float resultHeight =
-                EstimateTextHeight(
-                    result,
-                    65,
-                    145
-                );
+                27f;
 
             GUI.Box(
                 new Rect(
-                    x,
+                    localX,
                     cy,
-                    w,
+                    localW,
                     resultHeight
                 ),
                 ""
@@ -1592,9 +1713,9 @@ public sealed class GuideOverlay : MonoBehaviour
 
             GUI.Label(
                 new Rect(
-                    x + 9,
+                    localX + 9,
                     cy + 7,
-                    w - 18,
+                    localW - 18,
                     resultHeight - 14
                 ),
                 result,
@@ -1604,14 +1725,17 @@ public sealed class GuideOverlay : MonoBehaviour
             cy +=
                 resultHeight
                 +
-                12;
+                14f;
         }
 
+        // =========================
+        // 后续分支
+        // =========================
         GUI.Label(
             new Rect(
-                x,
+                localX,
                 cy,
-                w,
+                localW,
                 24
             ),
             node.Links.Count > 0
@@ -1623,7 +1747,7 @@ public sealed class GuideOverlay : MonoBehaviour
         );
 
         cy +=
-            27;
+            27f;
 
         if (
             node.Links.Count == 0
@@ -1631,10 +1755,10 @@ public sealed class GuideOverlay : MonoBehaviour
         {
             GUI.Label(
                 new Rect(
-                    x,
+                    localX,
                     cy,
-                    w,
-                    45
+                    localW,
+                    46
                 ),
                 node.Kind
                 ==
@@ -1645,73 +1769,47 @@ public sealed class GuideOverlay : MonoBehaviour
                     "没有解析到直接后续剧情。",
                 _body
             );
-
-            return;
         }
-
-        int shown =
-            0;
-
-        foreach (
-            var link
-            in
-            node.Links
-        )
+        else
         {
-            if (
-                shown >= 6
+            // 有了滚动以后，不再只显示前 6 条。
+            // 所有后续分支都可以在右侧滚动查看。
+            foreach (
+                var link
+                in
+                node.Links
             )
             {
-                break;
-            }
+                string label =
+                    _db.DescribeTransition(
+                        link
+                    );
 
-            string label =
-                _db.DescribeTransition(
-                    link
-                );
-
-            if (
-                GUI.Button(
-                    new Rect(
-                        x,
-                        cy,
-                        w,
-                        44
-                    ),
-                    label,
-                    _wrapButton
+                if (
+                    GUI.Button(
+                        new Rect(
+                            localX,
+                            cy,
+                            localW,
+                            44
+                        ),
+                        label,
+                        _wrapButton
+                    )
                 )
-            )
-            {
-                NavigateTo(
-                    link.TargetId,
-                    true
-                );
+                {
+                    NavigateTo(
+                        link.TargetId,
+                        true
+                    );
+                }
+
+                cy +=
+                    48f;
             }
-
-            cy +=
-                48;
-
-            shown++;
         }
 
-        if (
-            node.Links.Count
-            >
-            shown
-        )
-        {
-            GUI.Label(
-                new Rect(
-                    x,
-                    cy,
-                    w,
-                    24
-                ),
-                $"还有 {node.Links.Count - shown} 条分支，可用“全部搜索”继续查看。",
-                _small
-            );
-        }
+        GUI.EndScrollView();
     }
 
     private static float EstimateTextHeight(
@@ -1786,6 +1884,9 @@ public sealed class GuideOverlay : MonoBehaviour
 
         _selectedId =
             id;
+
+        _detailScroll =
+            Vector2.zero;
     }
 
     private static void RefreshSearch()
