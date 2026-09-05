@@ -410,7 +410,7 @@ public sealed class GuideOverlay : MonoBehaviour
         try
         {
             var gc =
-                Il2Cpp.GameController.Inst;
+                GameController.Inst;
 
             if (
                 gc == null
