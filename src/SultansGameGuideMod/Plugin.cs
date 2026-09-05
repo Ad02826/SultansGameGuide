@@ -6,17 +6,17 @@ namespace SultansGameGuide;
 [BepInPlugin(
     "wharman.sultansgame.guide",
     "苏丹的游戏·攻略助手",
-    "0.2.1"
+    "0.3.0"
 )]
 public sealed class Plugin : BasePlugin
 {
     public override void Load()
     {
-        var overlay = AddComponent<GuideOverlay>();
+        var overlay =
+            AddComponent<GuideOverlay>();
 
         Log.LogInfo(
-            "苏丹攻略助手 0.2.1 已加载：" +
-            "读取游戏 StreamingAssets/config；Ctrl+O 显示/隐藏"
+            "苏丹攻略助手 0.3.0 已加载：人话语义版；Ctrl+O 显示/隐藏"
         );
 
         Log.LogInfo(
