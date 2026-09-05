@@ -2582,14 +2582,14 @@ public sealed class GuideDatabase
                     JsonValueKind.Number
                     &&
                     item.TryGetInt32(
-                        out var id
+                        out var itemId
                     )
                 )
                 {
                     node.Links.Add(
                         new GuideLink(
                             label,
-                            id,
+                            itemId,
                             kind
                         )
                     );
