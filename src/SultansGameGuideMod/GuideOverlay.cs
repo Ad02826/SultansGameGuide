@@ -9,42 +9,70 @@ public sealed class GuideOverlay : MonoBehaviour
     private static readonly ManualLogSource Log =
         BepInEx.Logging.Logger.CreateLogSource("SultanGuideOverlay");
 
-    // 由 IL2CPP 侧创建组件时使用。
     public GuideOverlay(IntPtr ptr) : base(ptr) { }
 
-    // 用 static 避免把复杂托管字段注入到 IL2CPP 对象布局里。
+    private static GuideDatabase? _db;
     private static bool _visible = true;
     private static bool _minimized = false;
-    private static bool _loggedOnGui = false;
+    private static bool _loaded = false;
+    private static string _loadMessage = "正在读取游戏攻略数据…";
     private static string _search = "";
+    private static string _lastSearch = "\u0000";
+    private static List<GuideNode> _results = new();
+    private static int _resultPage = 0;
+    private static int _selectedId = 0;
+    private static readonly Stack<int> _history = new();
+
+    private static Rect _panel = new Rect(26, 70, 900, 680);
+    private static bool _dragging = false;
+    private static Vector2 _dragOffset = Vector2.zero;
+
+    private static GUIStyle? _title;
+    private static GUIStyle? _subTitle;
+    private static GUIStyle? _body;
+    private static GUIStyle? _small;
+    private static GUIStyle? _wrapButton;
+    private static GUIStyle? _boxStyle;
+    private static Texture2D? _panelTex;
+    private static Texture2D? _softTex;
+
+    private const int ResultsPerPage = 11;
 
     private void Start()
     {
         _visible = true;
-        Log.LogInfo("GuideOverlay.Start invoked");
-    }
 
-    private void Update()
-    {
-        bool ctrlHeld =
-            Input.GetKey(KeyCode.LeftControl) ||
-            Input.GetKey(KeyCode.RightControl);
-
-        if (ctrlHeld && Input.GetKeyDown(KeyCode.O))
+        try
         {
-            _visible = !_visible;
-            Log.LogInfo("Ctrl+O toggle from Update: " + _visible);
+            _db = new GuideDatabase();
+            _db.Load();
+            _loaded = _db.Nodes.Count > 0;
+            _loadMessage = _loaded
+                ? $"已读取 {_db.Nodes.Count} 个剧情节点、{_db.CardNames.Count} 张卡牌。"
+                : (_db.LastError.Length > 0 ? _db.LastError : "没有读取到剧情数据。");
+
+            RefreshSearch();
+
+            // 默认定位到「与正教决裂」，如果该版本没有就取第一项。
+            var initial = _db.Search("与正教决裂").FirstOrDefault()
+                       ?? _db.Nodes.Values.OrderBy(x => x.Id).FirstOrDefault();
+
+            if (initial != null) _selectedId = initial.Id;
+
+            Log.LogInfo(_loadMessage);
+        }
+        catch (Exception ex)
+        {
+            _loaded = false;
+            _loadMessage = "读取攻略数据失败：" + ex.Message;
+            Log.LogError(ex);
         }
     }
 
     private void OnGUI()
     {
-        if (!_loggedOnGui)
-        {
-            _loggedOnGui = true;
-            Log.LogInfo("GuideOverlay.OnGUI invoked");
-        }
-
+        // 不再使用 UnityEngine.Input.GetKey。
+        // 这个游戏的 legacy Input 调用在当前 IL2CPP interop 下会抛 SEHException。
         var e = Event.current;
         if (e != null &&
             e.type == EventType.KeyDown &&
@@ -53,63 +81,335 @@ public sealed class GuideOverlay : MonoBehaviour
         {
             _visible = !_visible;
             e.Use();
-            Log.LogInfo("Ctrl+O toggle from OnGUI: " + _visible);
         }
 
-        // 即使隐藏，也保留一个固定入口，避免快捷键被游戏吃掉。
+        EnsureStyles();
+
         if (!_visible)
         {
-            if (GUI.Button(new Rect(18, 85, 105, 36), "攻略助手"))
+            if (GUI.Button(new Rect(14, 80, 112, 36), "攻略助手"))
                 _visible = true;
             return;
         }
 
         if (_minimized)
         {
-            GUI.Box(new Rect(18, 85, 130, 45), "");
-            if (GUI.Button(new Rect(25, 92, 116, 31), "攻略助手  ＋"))
+            if (GUI.Button(new Rect(14, 80, 132, 38), "攻略助手  ＋"))
                 _minimized = false;
             return;
         }
 
-        // 先用最朴素、无委托的 IMGUI 验证渲染链路。
-        // 确认显示后，再换成最终半透明可拖动树状窗口。
-        const float x = 32f;
-        const float y = 78f;
-        const float w = 640f;
-        const float h = 430f;
+        HandleDrag(e);
+        ClampPanel();
 
-        GUI.Box(new Rect(x, y, w, h), "");
+        DrawPanel();
+    }
 
-        GUI.Label(
-            new Rect(x + 18, y + 16, 430, 28),
-            "苏丹的游戏 · 攻略助手  v0.1.7");
+    private static void DrawPanel()
+    {
+        var oldColor = GUI.color;
+        GUI.color = Color.white;
 
-        if (GUI.Button(new Rect(x + w - 86, y + 12, 32, 28), "—"))
+        GUI.Box(_panel, "", _boxStyle);
+
+        float x = _panel.x;
+        float y = _panel.y;
+        float w = _panel.width;
+        float h = _panel.height;
+
+        // 标题栏
+        GUI.Label(new Rect(x + 16, y + 10, 500, 30), "苏丹的游戏 · 攻略助手", _title);
+        GUI.Label(new Rect(x + 340, y + 15, 280, 22), "v0.2.0 · 读取游戏实时配置", _small);
+
+        if (GUI.Button(new Rect(x + w - 82, y + 9, 30, 26), "—"))
             _minimized = true;
-
-        if (GUI.Button(new Rect(x + w - 46, y + 12, 32, 28), "×"))
+        if (GUI.Button(new Rect(x + w - 44, y + 9, 30, 26), "×"))
             _visible = false;
 
-        GUI.Label(new Rect(x + 18, y + 58, 80, 26), "搜索：");
-        _search = GUI.TextField(
-            new Rect(x + 72, y + 56, w - 100, 28),
+        GUI.Label(new Rect(x + 16, y + 43, w - 32, 20), _loadMessage, _small);
+
+        // 搜索栏
+        GUI.Label(new Rect(x + 16, y + 70, 52, 26), "搜索", _subTitle);
+        string newSearch = GUI.TextField(
+            new Rect(x + 68, y + 68, w - 166, 29),
             _search ?? "");
 
-        GUI.Label(
-            new Rect(x + 18, y + 105, w - 36, 28),
-            "如果你能看到这里，说明 IL2CPP MonoBehaviour + OnGUI 已经真正运行。");
+        if (newSearch != _search)
+        {
+            _search = newSearch;
+            RefreshSearch();
+        }
 
-        GUI.Label(
-            new Rect(x + 18, y + 140, w - 36, 28),
-            "Ctrl + O：显示/隐藏；左上固定入口可兜底重新打开。");
+        if (GUI.Button(new Rect(x + w - 88, y + 68, 72, 29), "清空"))
+        {
+            _search = "";
+            RefreshSearch();
+        }
 
-        GUI.Label(
-            new Rect(x + 18, y + 185, w - 36, 80),
-            "下一步接入真实剧情数据：人物 → 事件 → 人话条件 → 选择分支 → 可达结局。");
+        float leftW = Math.Max(265, Math.Min(340, w * 0.36f));
+        float splitX = x + leftW + 14;
+        float contentY = y + 108;
+        float contentH = h - 124;
 
-        GUI.Label(
-            new Rect(x + 18, y + h - 55, w - 36, 28),
-            "当前为 interop 修复验证版，不修改游戏数值和存档。");
+        // 左侧结果
+        GUI.Box(new Rect(x + 12, contentY, leftW - 12, contentH), "", _softBoxStyle());
+        GUI.Label(new Rect(x + 24, contentY + 10, leftW - 36, 24), $"搜索结果（{_results.Count}）", _subTitle);
+
+        DrawResults(x + 20, contentY + 42, leftW - 28, contentH - 54);
+
+        // 右侧详情
+        GUI.Box(new Rect(splitX, contentY, w - (splitX - x) - 12, contentH), "", _softBoxStyle());
+        DrawDetails(splitX + 14, contentY + 12, w - (splitX - x) - 40, contentH - 24);
+
+        GUI.color = oldColor;
     }
+
+    private static GUIStyle _softBoxStyle() => _boxStyle ?? GUI.skin.box;
+
+    private static void DrawResults(float x, float y, float w, float h)
+    {
+        if (!_loaded || _db == null)
+        {
+            GUI.Label(new Rect(x, y, w, 80), "攻略数据库尚未加载。", _body);
+            return;
+        }
+
+        int pageCount = Math.Max(1, (_results.Count + ResultsPerPage - 1) / ResultsPerPage);
+        _resultPage = Math.Max(0, Math.Min(_resultPage, pageCount - 1));
+
+        int start = _resultPage * ResultsPerPage;
+        int end = Math.Min(_results.Count, start + ResultsPerPage);
+
+        float rowH = 42f;
+        float currentY = y;
+
+        for (int i = start; i < end; i++)
+        {
+            var n = _results[i];
+            string marker = n.Id == _selectedId ? "▶ " : "";
+            string kind = KindName(n.Kind);
+            string label = $"{marker}[{kind}] {n.Name}\n#{n.Id}";
+
+            if (GUI.Button(new Rect(x, currentY, w, rowH - 4), label, _wrapButton))
+                NavigateTo(n.Id, true);
+
+            currentY += rowH;
+        }
+
+        float navY = y + h - 32;
+        if (GUI.Button(new Rect(x, navY, 62, 26), "上一页") && _resultPage > 0)
+            _resultPage--;
+        if (GUI.Button(new Rect(x + 68, navY, 62, 26), "下一页") && _resultPage + 1 < pageCount)
+            _resultPage++;
+
+        GUI.Label(new Rect(x + 140, navY + 3, w - 140, 22),
+            $"{_resultPage + 1} / {pageCount}", _small);
+    }
+
+    private static void DrawDetails(float x, float y, float w, float h)
+    {
+        if (!_loaded || _db == null)
+        {
+            GUI.Label(new Rect(x, y, w, 100), _loadMessage, _body);
+            return;
+        }
+
+        var node = _db.Get(_selectedId);
+        if (node == null)
+        {
+            GUI.Label(new Rect(x, y, w, 80), "从左侧选择一个事件、仪式或结局。", _body);
+            return;
+        }
+
+        if (_history.Count > 0 && GUI.Button(new Rect(x, y, 68, 26), "← 返回"))
+        {
+            int prev = _history.Pop();
+            _selectedId = prev;
+            return;
+        }
+
+        GUI.Label(new Rect(x + 78, y + 1, w - 78, 28),
+            $"{KindName(node.Kind)} · {node.Name}", _title);
+
+        GUI.Label(new Rect(x + 78, y + 30, w - 78, 20),
+            $"ID：{node.Id}", _small);
+
+        float cy = y + 62;
+
+        GUI.Label(new Rect(x, cy, w, 24), "触发条件", _subTitle);
+        cy += 27;
+
+        string condition = string.IsNullOrWhiteSpace(node.HumanCondition)
+            ? "无特殊条件"
+            : node.HumanCondition;
+
+        float condH = Math.Min(180, Math.Max(52, _body.CalcHeight(new GUIContent(condition), w - 12) + 14));
+        GUI.Box(new Rect(x, cy, w, condH), "");
+        GUI.Label(new Rect(x + 8, cy + 6, w - 16, condH - 12), condition, _body);
+        cy += condH + 12;
+
+        if (!string.IsNullOrWhiteSpace(node.ResultText))
+        {
+            GUI.Label(new Rect(x, cy, w, 24), "结局内容", _subTitle);
+            cy += 26;
+
+            string txt = node.ResultText!;
+            if (txt.Length > 900) txt = txt[..900] + "\n……";
+            float resultH = Math.Min(190, Math.Max(70, _body.CalcHeight(new GUIContent(txt), w - 12) + 12));
+            GUI.Box(new Rect(x, cy, w, resultH), "");
+            GUI.Label(new Rect(x + 8, cy + 6, w - 16, resultH - 12), txt, _body);
+            cy += resultH + 10;
+        }
+
+        GUI.Label(new Rect(x, cy, w, 24), $"后续分支（{node.Links.Count}）", _subTitle);
+        cy += 27;
+
+        if (node.Links.Count == 0)
+        {
+            GUI.Label(new Rect(x, cy, w, 48),
+                node.Kind == NodeKind.AfterStory
+                    ? "这是结局 / 后日谈节点。"
+                    : "当前配置中没有解析到直接后续节点。",
+                _body);
+            return;
+        }
+
+        int shown = 0;
+        foreach (var link in node.Links)
+        {
+            if (shown >= 7) break;
+
+            string target = _db.DisplayTarget(link);
+            string label = $"{link.Label}\n→ {target}  #{link.TargetId}";
+
+            if (GUI.Button(new Rect(x, cy, w, 44), label, _wrapButton))
+                NavigateTo(link.TargetId, true);
+
+            cy += 48;
+            shown++;
+        }
+
+        if (node.Links.Count > shown)
+            GUI.Label(new Rect(x, cy, w, 24),
+                $"还有 {node.Links.Count - shown} 条分支；可直接搜索目标 ID。", _small);
+    }
+
+    private static void NavigateTo(int id, bool pushHistory)
+    {
+        if (_db == null || _db.Get(id) == null) return;
+
+        if (pushHistory && _selectedId != 0 && _selectedId != id)
+            _history.Push(_selectedId);
+
+        _selectedId = id;
+    }
+
+    private static void RefreshSearch()
+    {
+        if (_db == null) return;
+        if (_lastSearch == _search && _results.Count > 0) return;
+
+        _lastSearch = _search;
+        _results = _db.Search(_search).ToList();
+        _resultPage = 0;
+    }
+
+    private static void HandleDrag(Event? e)
+    {
+        if (e == null) return;
+
+        var titleBar = new Rect(_panel.x, _panel.y, _panel.width - 100, 50);
+
+        if (e.type == EventType.MouseDown && e.button == 0 && titleBar.Contains(e.mousePosition))
+        {
+            _dragging = true;
+            _dragOffset = new Vector2(e.mousePosition.x - _panel.x, e.mousePosition.y - _panel.y);
+            e.Use();
+        }
+        else if (e.type == EventType.MouseDrag && _dragging)
+        {
+            _panel.x = e.mousePosition.x - _dragOffset.x;
+            _panel.y = e.mousePosition.y - _dragOffset.y;
+            e.Use();
+        }
+        else if (e.type == EventType.MouseUp)
+        {
+            _dragging = false;
+        }
+    }
+
+    private static void ClampPanel()
+    {
+        _panel.width = Math.Min(_panel.width, Screen.width - 20);
+        _panel.height = Math.Min(_panel.height, Screen.height - 20);
+        _panel.x = Math.Max(0, Math.Min(_panel.x, Screen.width - _panel.width));
+        _panel.y = Math.Max(0, Math.Min(_panel.y, Screen.height - 45));
+    }
+
+    private static void EnsureStyles()
+    {
+        if (_panelTex == null)
+        {
+            _panelTex = new Texture2D(1, 1);
+            _panelTex.SetPixel(0, 0, new Color(0.045f, 0.065f, 0.085f, 0.91f));
+            _panelTex.Apply();
+        }
+
+        if (_softTex == null)
+        {
+            _softTex = new Texture2D(1, 1);
+            _softTex.SetPixel(0, 0, new Color(0.07f, 0.10f, 0.13f, 0.76f));
+            _softTex.Apply();
+        }
+
+        _boxStyle ??= new GUIStyle(GUI.skin.box)
+        {
+            normal = { background = _panelTex }
+        };
+
+        _title ??= new GUIStyle(GUI.skin.label)
+        {
+            fontSize = 16,
+            fontStyle = FontStyle.Bold,
+            wordWrap = true,
+            normal = { textColor = new Color(0.86f, 0.94f, 1f, 1f) }
+        };
+
+        _subTitle ??= new GUIStyle(GUI.skin.label)
+        {
+            fontSize = 13,
+            fontStyle = FontStyle.Bold,
+            normal = { textColor = new Color(0.64f, 0.84f, 0.98f, 1f) }
+        };
+
+        _body ??= new GUIStyle(GUI.skin.label)
+        {
+            fontSize = 13,
+            wordWrap = true,
+            normal = { textColor = Color.white }
+        };
+
+        _small ??= new GUIStyle(GUI.skin.label)
+        {
+            fontSize = 11,
+            wordWrap = true,
+            normal = { textColor = new Color(0.67f, 0.73f, 0.78f, 1f) }
+        };
+
+        _wrapButton ??= new GUIStyle(GUI.skin.button)
+        {
+            fontSize = 12,
+            wordWrap = true,
+            alignment = TextAnchor.MiddleLeft,
+            padding = new RectOffset(8, 8, 4, 4)
+        };
+    }
+
+    private static string KindName(NodeKind kind) => kind switch
+    {
+        NodeKind.Event => "事件",
+        NodeKind.Rite => "仪式",
+        NodeKind.AfterStory => "结局",
+        _ => kind.ToString()
+    };
 }
