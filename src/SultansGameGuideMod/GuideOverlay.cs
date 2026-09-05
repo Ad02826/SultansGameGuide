@@ -1,6 +1,8 @@
 using System;
+using System.Runtime.CompilerServices;
 using BepInEx.Logging;
 using UnityEngine;
+using UnityEngine.EventSystems;
 
 namespace SultansGameGuide;
 
@@ -13,6 +15,13 @@ public sealed class GuideOverlay : MonoBehaviour
     {
     }
 
+    private sealed class RuntimeNodeItem
+    {
+        public GuideNode Node { get; init; } = null!;
+        public string Prefix { get; init; } = "";
+        public bool IsActive { get; init; }
+    }
+
     private static GuideDatabase? _db;
 
     private static bool _visible = true;
@@ -20,20 +29,36 @@ public sealed class GuideOverlay : MonoBehaviour
     private static bool _loaded = false;
 
     private static string _loadMessage = "正在读取游戏攻略数据……";
+
+    // 左栏：0 = 当前剧情；1 = 全部搜索
+    private static int _leftMode = 0;
+    private static bool _autoFollow = true;
+
     private static string _search = "";
     private static string _lastSearch = "\u0000";
-
     private static List<GuideNode> _results = new();
+
+    private static readonly List<RuntimeNodeItem> _runtimeNodes = new();
+    private static readonly HashSet<int> _activeEventIds = new();
+    private static string _runtimeStatus = "正在连接当前游戏状态……";
+    private static DateTime _nextRuntimeRefreshUtc = DateTime.MinValue;
+    private static string _activeSignature = "";
+
     private static int _resultPage = 0;
     private static int _selectedId = 0;
 
     private static readonly Stack<int> _history = new();
 
     private static Rect _panel =
-        new Rect(26, 70, 920, 700);
+        new Rect(26, 70, 940, 710);
 
     private static bool _dragging = false;
     private static Vector2 _dragOffset = Vector2.zero;
+
+    // 当鼠标在攻略窗口上时，临时关闭游戏 EventSystem，
+    // 防止点击攻略窗口同时点到下面的游戏 UI。
+    private static EventSystem? _suppressedEventSystem;
+    private static bool _gameUiSuppressed = false;
 
     private static GUIStyle? _title;
     private static GUIStyle? _subTitle;
@@ -42,9 +67,11 @@ public sealed class GuideOverlay : MonoBehaviour
     private static GUIStyle? _wrapButton;
     private static GUIStyle? _boxStyle;
     private static GUIStyle? _softBoxStyle;
+    private static GUIStyle? _activeButtonStyle;
 
     private static Texture2D? _panelTex;
     private static Texture2D? _softTex;
+    private static Texture2D? _activeTex;
 
     private const int ResultsPerPage = 11;
 
@@ -74,30 +101,24 @@ public sealed class GuideOverlay : MonoBehaviour
                     );
 
             RefreshSearch();
+            RefreshRuntimeContext(force: true);
 
-            var initial =
-                _db.Search(
-                    "向神殿求助"
-                )
-                .FirstOrDefault()
-                ??
-                _db.Search(
-                    "与正教决裂"
-                )
-                .FirstOrDefault()
-                ??
-                _db.Nodes
-                    .Values
-                    .OrderBy(
-                        x =>
-                            x.Id
-                    )
-                    .FirstOrDefault();
-
-            if (initial != null)
+            if (_selectedId == 0)
             {
-                _selectedId =
-                    initial.Id;
+                var initial =
+                    _db.Nodes
+                        .Values
+                        .OrderBy(
+                            x =>
+                                x.Id
+                        )
+                        .FirstOrDefault();
+
+                if (initial != null)
+                {
+                    _selectedId =
+                        initial.Id;
+                }
             }
 
             Log.LogInfo(
@@ -123,13 +144,22 @@ public sealed class GuideOverlay : MonoBehaviour
         }
     }
 
+    private void OnDestroy()
+    {
+        RestoreGameUiInput();
+    }
+
+    private void OnDisable()
+    {
+        RestoreGameUiInput();
+    }
+
     private void OnGUI()
     {
-        // 不使用 UnityEngine.Input.GetKey。
-        // 当前游戏的 legacy Input 在 IL2CPP 下会抛 SEHException。
         var e =
             Event.current;
 
+        // Ctrl+O 仍作为备用开关。
         if (
             e != null
             &&
@@ -147,6 +177,11 @@ public sealed class GuideOverlay : MonoBehaviour
             _visible =
                 !_visible;
 
+            if (!_visible)
+            {
+                RestoreGameUiInput();
+            }
+
             e.Use();
         }
 
@@ -154,14 +189,19 @@ public sealed class GuideOverlay : MonoBehaviour
 
         if (!_visible)
         {
+            RestoreGameUiInput();
+
+            Rect openRect =
+                new Rect(
+                    14,
+                    80,
+                    118,
+                    38
+                );
+
             if (
                 GUI.Button(
-                    new Rect(
-                        14,
-                        80,
-                        112,
-                        36
-                    ),
+                    openRect,
                     "攻略助手"
                 )
             )
@@ -175,14 +215,19 @@ public sealed class GuideOverlay : MonoBehaviour
 
         if (_minimized)
         {
+            RestoreGameUiInput();
+
+            Rect miniRect =
+                new Rect(
+                    14,
+                    80,
+                    138,
+                    40
+                );
+
             if (
                 GUI.Button(
-                    new Rect(
-                        14,
-                        80,
-                        132,
-                        38
-                    ),
+                    miniRect,
                     "攻略助手 ＋"
                 )
             )
@@ -194,13 +239,430 @@ public sealed class GuideOverlay : MonoBehaviour
             return;
         }
 
+        RefreshRuntimeContext(force: false);
+
         HandleDrag(
             e
         );
 
         ClampPanel();
+
+        // 先根据当前鼠标位置决定是否压住游戏 UI。
+        bool mouseInside =
+            e != null
+            &&
+            _panel.Contains(
+                e.mousePosition
+            );
+
+        SetGameUiSuppressed(
+            mouseInside
+        );
+
         DrawPanel();
+
+        // IMGUI 自己的鼠标事件也吃掉。
+        // 注意放在 DrawPanel 之后，否则攻略窗自己的按钮也收不到点击。
+        if (
+            mouseInside
+            &&
+            e != null
+            &&
+            IsMouseEvent(
+                e.type
+            )
+            &&
+            e.type
+            !=
+            EventType.Used
+        )
+        {
+            e.Use();
+        }
     }
+
+    private static bool IsMouseEvent(
+        EventType type
+    )
+    {
+        return
+            type
+            ==
+            EventType.MouseDown
+            ||
+            type
+            ==
+            EventType.MouseUp
+            ||
+            type
+            ==
+            EventType.MouseDrag
+            ||
+            type
+            ==
+            EventType.ScrollWheel;
+    }
+
+    private static void SetGameUiSuppressed(
+        bool suppress
+    )
+    {
+        try
+        {
+            var current =
+                EventSystem.current;
+
+            if (suppress)
+            {
+                if (
+                    current != null
+                    &&
+                    current.enabled
+                )
+                {
+                    current.enabled =
+                        false;
+
+                    _suppressedEventSystem =
+                        current;
+
+                    _gameUiSuppressed =
+                        true;
+                }
+            }
+            else
+            {
+                RestoreGameUiInput();
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    private static void RestoreGameUiInput()
+    {
+        if (!_gameUiSuppressed)
+        {
+            return;
+        }
+
+        try
+        {
+            if (
+                _suppressedEventSystem
+                !=
+                null
+            )
+            {
+                _suppressedEventSystem.enabled =
+                    true;
+            }
+        }
+        catch
+        {
+        }
+
+        _suppressedEventSystem =
+            null;
+
+        _gameUiSuppressed =
+            false;
+    }
+
+    // ============================================================
+    // 运行时：读取当前活跃事件并自动构造“当前剧情”左栏
+    // ============================================================
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void RefreshRuntimeContext(
+        bool force
+    )
+    {
+        if (
+            _db == null
+            ||
+            !_loaded
+        )
+        {
+            return;
+        }
+
+        DateTime now =
+            DateTime.UtcNow;
+
+        if (
+            !force
+            &&
+            now
+            <
+            _nextRuntimeRefreshUtc
+        )
+        {
+            return;
+        }
+
+        _nextRuntimeRefreshUtc =
+            now.AddMilliseconds(
+                700
+            );
+
+        try
+        {
+            var gc =
+                Il2Cpp.GameController.Inst;
+
+            if (
+                gc == null
+                ||
+                gc.EventTrigger == null
+            )
+            {
+                _runtimeNodes.Clear();
+                _activeEventIds.Clear();
+
+                _runtimeStatus =
+                    "当前不在可读取的游戏局内。";
+
+                return;
+            }
+
+            var activeEvents =
+                gc.EventTrigger.GetActiveEvents();
+
+            var newActiveIds =
+                new List<int>();
+
+            if (activeEvents != null)
+            {
+                foreach (
+                    var evt
+                    in
+                    activeEvents
+                )
+                {
+                    try
+                    {
+                        var idObject =
+                            evt.id;
+
+                        if (idObject == null)
+                        {
+                            continue;
+                        }
+
+                        int eventId =
+                            Convert.ToInt32(
+                                idObject.ToString()
+                            );
+
+                        if (
+                            eventId > 0
+                        )
+                        {
+                            newActiveIds.Add(
+                                eventId
+                            );
+                        }
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
+
+            newActiveIds =
+                newActiveIds
+                    .Distinct()
+                    .ToList();
+
+            string newSignature =
+                string.Join(
+                    ",",
+                    newActiveIds
+                        .OrderBy(
+                            x =>
+                                x
+                        )
+                );
+
+            bool changed =
+                !string.Equals(
+                    _activeSignature,
+                    newSignature,
+                    StringComparison.Ordinal
+                );
+
+            _activeSignature =
+                newSignature;
+
+            _activeEventIds.Clear();
+
+            foreach (
+                int eventId
+                in
+                newActiveIds
+            )
+            {
+                _activeEventIds.Add(
+                    eventId
+                );
+            }
+
+            _runtimeNodes.Clear();
+
+            // 第一层：游戏当前真正处于活跃状态的事件。
+            foreach (
+                int eventId
+                in
+                newActiveIds
+            )
+            {
+                var node =
+                    _db.Get(
+                        eventId
+                    );
+
+                if (node == null)
+                {
+                    continue;
+                }
+
+                _runtimeNodes.Add(
+                    new RuntimeNodeItem
+                    {
+                        Node =
+                            node,
+
+                        Prefix =
+                            "● 正在进行",
+
+                        IsActive =
+                            true
+                    }
+                );
+            }
+
+            // 第二层：从当前事件能够直接走到的下一步。
+            var seen =
+                new HashSet<int>(
+                    newActiveIds
+                );
+
+            foreach (
+                int eventId
+                in
+                newActiveIds
+            )
+            {
+                var current =
+                    _db.Get(
+                        eventId
+                    );
+
+                if (current == null)
+                {
+                    continue;
+                }
+
+                foreach (
+                    var link
+                    in
+                    current.Links
+                )
+                {
+                    if (
+                        seen.Contains(
+                            link.TargetId
+                        )
+                    )
+                    {
+                        continue;
+                    }
+
+                    var target =
+                        _db.Get(
+                            link.TargetId
+                        );
+
+                    if (target == null)
+                    {
+                        continue;
+                    }
+
+                    seen.Add(
+                        link.TargetId
+                    );
+
+                    _runtimeNodes.Add(
+                        new RuntimeNodeItem
+                        {
+                            Node =
+                                target,
+
+                            Prefix =
+                                "→ 可能后续",
+
+                            IsActive =
+                                false
+                        }
+                    );
+                }
+            }
+
+            _runtimeStatus =
+                newActiveIds.Count > 0
+                    ?
+                    $"当前有 {newActiveIds.Count} 个活跃事件；列表会自动刷新。"
+                    :
+                    "当前没有检测到活跃事件。";
+
+            if (
+                _autoFollow
+                &&
+                newActiveIds.Count > 0
+                &&
+                (
+                    changed
+                    ||
+                    !_activeEventIds.Contains(
+                        _selectedId
+                    )
+                )
+            )
+            {
+                int first =
+                    newActiveIds[0];
+
+                if (
+                    _db.Get(first)
+                    !=
+                    null
+                )
+                {
+                    _selectedId =
+                        first;
+
+                    _history.Clear();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _runtimeStatus =
+                "读取当前剧情失败，已保留手动搜索模式。";
+
+            Log.LogWarning(
+                "RefreshRuntimeContext failed: "
+                +
+                ex.Message
+            );
+        }
+    }
+
+    // ============================================================
+    // UI
+    // ============================================================
 
     private static void DrawPanel()
     {
@@ -237,10 +699,10 @@ public sealed class GuideOverlay : MonoBehaviour
             new Rect(
                 x + 385,
                 y + 15,
-                310,
+                330,
                 22
             ),
-            "v0.3.0 · 人话语义版",
+            "v0.4.0 · 当前剧情自动跟随",
             _small
         );
 
@@ -258,6 +720,8 @@ public sealed class GuideOverlay : MonoBehaviour
         {
             _minimized =
                 true;
+
+            RestoreGameUiInput();
         }
 
         if (
@@ -274,6 +738,8 @@ public sealed class GuideOverlay : MonoBehaviour
         {
             _visible =
                 false;
+
+            RestoreGameUiInput();
         }
 
         GUI.Label(
@@ -287,23 +753,106 @@ public sealed class GuideOverlay : MonoBehaviour
             _small
         );
 
+        // 左栏模式选择
+        if (
+            GUI.Button(
+                new Rect(
+                    x + 16,
+                    y + 69,
+                    108,
+                    29
+                ),
+                "当前剧情",
+                _leftMode == 0
+                    ?
+                    _activeButtonStyle
+                    :
+                    _wrapButton
+            )
+        )
+        {
+            _leftMode =
+                0;
+
+            RefreshRuntimeContext(
+                force: true
+            );
+        }
+
+        if (
+            GUI.Button(
+                new Rect(
+                    x + 130,
+                    y + 69,
+                    108,
+                    29
+                ),
+                "全部搜索",
+                _leftMode == 1
+                    ?
+                    _activeButtonStyle
+                    :
+                    _wrapButton
+            )
+        )
+        {
+            _leftMode =
+                1;
+        }
+
+        string followText =
+            _autoFollow
+                ?
+                "自动跟随：开"
+                :
+                "自动跟随：关";
+
+        if (
+            GUI.Button(
+                new Rect(
+                    x + 246,
+                    y + 69,
+                    112,
+                    29
+                ),
+                followText,
+                _autoFollow
+                    ?
+                    _activeButtonStyle
+                    :
+                    _wrapButton
+            )
+        )
+        {
+            _autoFollow =
+                !_autoFollow;
+
+            if (_autoFollow)
+            {
+                RefreshRuntimeContext(
+                    force: true
+                );
+            }
+        }
+
+        // 搜索仍保留，但只在“全部搜索”模式下作为主入口。
         GUI.Label(
             new Rect(
-                x + 16,
-                y + 70,
-                52,
-                26
+                x + 382,
+                y + 73,
+                42,
+                24
             ),
             "搜索",
-            _subTitle
+            _small
         );
 
         string newSearch =
             GUI.TextField(
                 new Rect(
-                    x + 68,
-                    y + 68,
-                    w - 166,
+                    x + 426,
+                    y + 69,
+                    w - 520,
                     29
                 ),
                 _search
@@ -321,13 +870,23 @@ public sealed class GuideOverlay : MonoBehaviour
                 newSearch;
 
             RefreshSearch();
+
+            if (
+                !string.IsNullOrWhiteSpace(
+                    _search
+                )
+            )
+            {
+                _leftMode =
+                    1;
+            }
         }
 
         if (
             GUI.Button(
                 new Rect(
                     x + w - 88,
-                    y + 68,
+                    y + 69,
                     72,
                     29
                 ),
@@ -343,10 +902,10 @@ public sealed class GuideOverlay : MonoBehaviour
 
         float leftW =
             Math.Max(
-                270,
+                285,
                 Math.Min(
-                    330,
-                    w * 0.34f
+                    350,
+                    w * 0.36f
                 )
             );
 
@@ -370,23 +929,59 @@ public sealed class GuideOverlay : MonoBehaviour
             _softBoxStyle
         );
 
-        GUI.Label(
-            new Rect(
-                x + 24,
-                contentY + 10,
-                leftW - 36,
-                24
-            ),
-            $"搜索结果（{_results.Count}）",
-            _subTitle
-        );
+        if (
+            _leftMode == 0
+        )
+        {
+            GUI.Label(
+                new Rect(
+                    x + 24,
+                    contentY + 10,
+                    leftW - 36,
+                    24
+                ),
+                "与你当前进度相关",
+                _subTitle
+            );
 
-        DrawResults(
-            x + 20,
-            contentY + 42,
-            leftW - 28,
-            contentH - 54
-        );
+            GUI.Label(
+                new Rect(
+                    x + 24,
+                    contentY + 34,
+                    leftW - 36,
+                    38
+                ),
+                _runtimeStatus,
+                _small
+            );
+
+            DrawRuntimeResults(
+                x + 20,
+                contentY + 76,
+                leftW - 28,
+                contentH - 88
+            );
+        }
+        else
+        {
+            GUI.Label(
+                new Rect(
+                    x + 24,
+                    contentY + 10,
+                    leftW - 36,
+                    24
+                ),
+                $"全部剧情（{_results.Count}）",
+                _subTitle
+            );
+
+            DrawSearchResults(
+                x + 20,
+                contentY + 42,
+                leftW - 28,
+                contentH - 54
+            );
+        }
 
         GUI.Box(
             new Rect(
@@ -407,7 +1002,136 @@ public sealed class GuideOverlay : MonoBehaviour
         );
     }
 
-    private static void DrawResults(
+    private static void DrawRuntimeResults(
+        float x,
+        float y,
+        float w,
+        float h
+    )
+    {
+        if (
+            !_loaded
+            ||
+            _db == null
+        )
+        {
+            GUI.Label(
+                new Rect(
+                    x,
+                    y,
+                    w,
+                    60
+                ),
+                "攻略数据库尚未加载。",
+                _body
+            );
+
+            return;
+        }
+
+        if (
+            _runtimeNodes.Count == 0
+        )
+        {
+            GUI.Label(
+                new Rect(
+                    x,
+                    y,
+                    w,
+                    90
+                ),
+                "当前没有检测到活跃剧情。\n进入一局游戏后，这里会自动显示正在进行的事件和紧接着可能出现的后续。",
+                _body
+            );
+
+            return;
+        }
+
+        float cy =
+            y;
+
+        int shown =
+            0;
+
+        foreach (
+            var item
+            in
+            _runtimeNodes
+        )
+        {
+            if (
+                cy + 46
+                >
+                y + h
+            )
+            {
+                break;
+            }
+
+            string marker =
+                item.Node.Id
+                ==
+                _selectedId
+                    ?
+                    "▶ "
+                    :
+                    "";
+
+            string label =
+                $"{marker}{item.Prefix}  {item.Node.Name}";
+
+            GUIStyle style =
+                item.IsActive
+                    ?
+                    _activeButtonStyle!
+                    :
+                    _wrapButton!;
+
+            if (
+                GUI.Button(
+                    new Rect(
+                        x,
+                        cy,
+                        w,
+                        40
+                    ),
+                    label,
+                    style
+                )
+            )
+            {
+                NavigateTo(
+                    item.Node.Id,
+                    true
+                );
+            }
+
+            cy +=
+                44;
+
+            shown++;
+        }
+
+        if (
+            shown
+            <
+            _runtimeNodes.Count
+        )
+        {
+            GUI.Label(
+                new Rect(
+                    x,
+                    cy,
+                    w,
+                    28
+                ),
+                $"还有 {_runtimeNodes.Count - shown} 个相关节点，可点“全部搜索”查看。",
+                _small
+            );
+        }
+    }
+
+    private static void DrawSearchResults(
         float x,
         float y,
         float w,
@@ -640,6 +1364,15 @@ public sealed class GuideOverlay : MonoBehaviour
             return;
         }
 
+        string stateTag =
+            _activeEventIds.Contains(
+                node.Id
+            )
+                ?
+                "【当前正在进行】 "
+                :
+                "";
+
         GUI.Label(
             new Rect(
                 x + 80,
@@ -647,7 +1380,7 @@ public sealed class GuideOverlay : MonoBehaviour
                 w - 80,
                 34
             ),
-            $"{KindName(node.Kind)} · {node.Name}",
+            $"{stateTag}{KindName(node.Kind)} · {node.Name}",
             _title
         );
 
@@ -934,7 +1667,7 @@ public sealed class GuideOverlay : MonoBehaviour
                     w,
                     24
                 ),
-                $"还有 {node.Links.Count - shown} 条分支，可搜索剧情名称继续查看。",
+                $"还有 {node.Links.Count - shown} 条分支，可用“全部搜索”继续查看。",
                 _small
             );
         }
@@ -961,7 +1694,6 @@ public sealed class GuideOverlay : MonoBehaviour
             }
         }
 
-        // 再按中文大约每 28~32 字一行估算自动换行。
         lines +=
             text.Length
             /
@@ -1171,14 +1903,15 @@ public sealed class GuideOverlay : MonoBehaviour
                     1
                 );
 
+            // 完全不透明
             _panelTex.SetPixel(
                 0,
                 0,
                 new Color(
-                    0.045f,
-                    0.065f,
-                    0.085f,
-                    0.91f
+                    0.035f,
+                    0.050f,
+                    0.070f,
+                    1.00f
                 )
             );
 
@@ -1197,18 +1930,45 @@ public sealed class GuideOverlay : MonoBehaviour
                     1
                 );
 
+            // 内部区域也不透明
             _softTex.SetPixel(
                 0,
                 0,
                 new Color(
-                    0.07f,
-                    0.10f,
-                    0.13f,
-                    0.76f
+                    0.065f,
+                    0.085f,
+                    0.110f,
+                    1.00f
                 )
             );
 
             _softTex.Apply();
+        }
+
+        if (
+            _activeTex
+            ==
+            null
+        )
+        {
+            _activeTex =
+                new Texture2D(
+                    1,
+                    1
+                );
+
+            _activeTex.SetPixel(
+                0,
+                0,
+                new Color(
+                    0.105f,
+                    0.220f,
+                    0.300f,
+                    1.00f
+                )
+            );
+
+            _activeTex.Apply();
         }
 
         if (
@@ -1361,6 +2121,14 @@ public sealed class GuideOverlay : MonoBehaviour
             _wrapButton.alignment =
                 TextAnchor.MiddleLeft;
 
+            _wrapButton.padding =
+                new RectOffset(
+                    8,
+                    8,
+                    4,
+                    4
+                );
+
             _wrapButton
                 .normal
                 .background =
@@ -1387,6 +2155,66 @@ public sealed class GuideOverlay : MonoBehaviour
                     Color.white;
 
             _wrapButton
+                .active
+                .textColor =
+                    Color.white;
+        }
+
+        if (
+            _activeButtonStyle
+            ==
+            null
+        )
+        {
+            _activeButtonStyle =
+                new GUIStyle();
+
+            _activeButtonStyle.fontSize =
+                12;
+
+            _activeButtonStyle.fontStyle =
+                FontStyle.Bold;
+
+            _activeButtonStyle.wordWrap =
+                true;
+
+            _activeButtonStyle.alignment =
+                TextAnchor.MiddleLeft;
+
+            _activeButtonStyle.padding =
+                new RectOffset(
+                    8,
+                    8,
+                    4,
+                    4
+                );
+
+            _activeButtonStyle
+                .normal
+                .background =
+                    _activeTex;
+
+            _activeButtonStyle
+                .hover
+                .background =
+                    _activeTex;
+
+            _activeButtonStyle
+                .active
+                .background =
+                    _activeTex;
+
+            _activeButtonStyle
+                .normal
+                .textColor =
+                    Color.white;
+
+            _activeButtonStyle
+                .hover
+                .textColor =
+                    Color.white;
+
+            _activeButtonStyle
                 .active
                 .textColor =
                     Color.white;
