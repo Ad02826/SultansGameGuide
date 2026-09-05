@@ -24,19 +24,16 @@ public sealed class GuideOverlay : MonoBehaviour
     private static string _lastSearch = "\u0000";
 
     private static List<GuideNode> _results = new();
-
     private static int _resultPage = 0;
     private static int _selectedId = 0;
 
     private static readonly Stack<int> _history = new();
 
     private static Rect _panel =
-        new Rect(26, 70, 900, 680);
+        new Rect(26, 70, 920, 700);
 
     private static bool _dragging = false;
-
-    private static Vector2 _dragOffset =
-        Vector2.zero;
+    private static Vector2 _dragOffset = Vector2.zero;
 
     private static GUIStyle? _title;
     private static GUIStyle? _subTitle;
@@ -58,32 +55,49 @@ public sealed class GuideOverlay : MonoBehaviour
         try
         {
             _db = new GuideDatabase();
-
             _db.Load();
 
-            _loaded = _db.Nodes.Count > 0;
+            _loaded =
+                _db.Nodes.Count > 0;
 
-            _loadMessage = _loaded
-                ? $"已读取 {_db.Nodes.Count} 个剧情节点、{_db.CardNames.Count} 张卡牌。"
-                : (
-                    _db.LastError.Length > 0
-                        ? _db.LastError
-                        : "没有读取到剧情数据。"
-                );
+            _loadMessage =
+                _loaded
+                    ?
+                    $"已读取 {_db.Nodes.Count} 个剧情节点。"
+                    :
+                    (
+                        _db.LastError.Length > 0
+                            ?
+                            _db.LastError
+                            :
+                            "没有读取到剧情数据。"
+                    );
 
             RefreshSearch();
 
-            // 默认先尝试定位到“与正教决裂”
             var initial =
-                _db.Search("与正教决裂").FirstOrDefault()
+                _db.Search(
+                    "向神殿求助"
+                )
+                .FirstOrDefault()
                 ??
-                _db.Nodes.Values
-                    .OrderBy(x => x.Id)
+                _db.Search(
+                    "与正教决裂"
+                )
+                .FirstOrDefault()
+                ??
+                _db.Nodes
+                    .Values
+                    .OrderBy(
+                        x =>
+                            x.Id
+                    )
                     .FirstOrDefault();
 
             if (initial != null)
             {
-                _selectedId = initial.Id;
+                _selectedId =
+                    initial.Id;
             }
 
             Log.LogInfo(
@@ -99,45 +113,45 @@ public sealed class GuideOverlay : MonoBehaviour
             _loaded = false;
 
             _loadMessage =
-                "读取攻略数据失败：" + ex.Message;
+                "读取攻略数据失败："
+                +
+                ex.Message;
 
-            Log.LogError(ex);
+            Log.LogError(
+                ex
+            );
         }
     }
 
     private void OnGUI()
     {
-        /*
-         * 不再使用：
-         *
-         * Input.GetKey(...)
-         *
-         * 因为《苏丹的游戏》当前 IL2CPP interop
-         * 调用 legacy Input 会产生 SEHException。
-         *
-         * Ctrl + O 改由 IMGUI Event 监听。
-         */
-
-        var e = Event.current;
+        // 不使用 UnityEngine.Input.GetKey。
+        // 当前游戏的 legacy Input 在 IL2CPP 下会抛 SEHException。
+        var e =
+            Event.current;
 
         if (
             e != null
             &&
-            e.type == EventType.KeyDown
+            e.type
+            ==
+            EventType.KeyDown
             &&
-            e.keyCode == KeyCode.O
+            e.keyCode
+            ==
+            KeyCode.O
             &&
             e.control
         )
         {
-            _visible = !_visible;
+            _visible =
+                !_visible;
 
             e.Use();
         }
 
         EnsureStyles();
 
-        // 完全隐藏时仍保留一个入口按钮
         if (!_visible)
         {
             if (
@@ -152,13 +166,13 @@ public sealed class GuideOverlay : MonoBehaviour
                 )
             )
             {
-                _visible = true;
+                _visible =
+                    true;
             }
 
             return;
         }
 
-        // 最小化状态
         if (_minimized)
         {
             if (
@@ -173,45 +187,46 @@ public sealed class GuideOverlay : MonoBehaviour
                 )
             )
             {
-                _minimized = false;
+                _minimized =
+                    false;
             }
 
             return;
         }
 
-        HandleDrag(e);
+        HandleDrag(
+            e
+        );
 
         ClampPanel();
-
         DrawPanel();
     }
 
     private static void DrawPanel()
     {
-        var oldColor = GUI.color;
-
-        GUI.color = Color.white;
-
         GUI.Box(
             _panel,
             "",
             _boxStyle
         );
 
-        float x = _panel.x;
-        float y = _panel.y;
-        float w = _panel.width;
-        float h = _panel.height;
+        float x =
+            _panel.x;
 
-        // =========================
-        // 标题栏
-        // =========================
+        float y =
+            _panel.y;
+
+        float w =
+            _panel.width;
+
+        float h =
+            _panel.height;
 
         GUI.Label(
             new Rect(
                 x + 16,
                 y + 10,
-                500,
+                480,
                 30
             ),
             "苏丹的游戏 · 攻略助手",
@@ -220,12 +235,12 @@ public sealed class GuideOverlay : MonoBehaviour
 
         GUI.Label(
             new Rect(
-                x + 340,
+                x + 385,
                 y + 15,
-                300,
+                310,
                 22
             ),
-            "v0.2.1 · 读取游戏真实配置",
+            "v0.3.0 · 人话语义版",
             _small
         );
 
@@ -241,7 +256,8 @@ public sealed class GuideOverlay : MonoBehaviour
             )
         )
         {
-            _minimized = true;
+            _minimized =
+                true;
         }
 
         if (
@@ -256,7 +272,8 @@ public sealed class GuideOverlay : MonoBehaviour
             )
         )
         {
-            _visible = false;
+            _visible =
+                false;
         }
 
         GUI.Label(
@@ -269,10 +286,6 @@ public sealed class GuideOverlay : MonoBehaviour
             _loadMessage,
             _small
         );
-
-        // =========================
-        // 搜索
-        // =========================
 
         GUI.Label(
             new Rect(
@@ -293,12 +306,19 @@ public sealed class GuideOverlay : MonoBehaviour
                     w - 166,
                     29
                 ),
-                _search ?? ""
+                _search
+                ??
+                ""
             );
 
-        if (newSearch != _search)
+        if (
+            newSearch
+            !=
+            _search
+        )
         {
-            _search = newSearch;
+            _search =
+                newSearch;
 
             RefreshSearch();
         }
@@ -315,21 +335,18 @@ public sealed class GuideOverlay : MonoBehaviour
             )
         )
         {
-            _search = "";
+            _search =
+                "";
 
             RefreshSearch();
         }
 
-        // =========================
-        // 主体区域
-        // =========================
-
         float leftW =
             Math.Max(
-                265,
+                270,
                 Math.Min(
-                    340,
-                    w * 0.36f
+                    330,
+                    w * 0.34f
                 )
             );
 
@@ -342,7 +359,6 @@ public sealed class GuideOverlay : MonoBehaviour
         float contentH =
             h - 124;
 
-        // 左栏
         GUI.Box(
             new Rect(
                 x + 12,
@@ -372,7 +388,6 @@ public sealed class GuideOverlay : MonoBehaviour
             contentH - 54
         );
 
-        // 右栏
         GUI.Box(
             new Rect(
                 splitX,
@@ -390,8 +405,6 @@ public sealed class GuideOverlay : MonoBehaviour
             w - (splitX - x) - 40,
             contentH - 24
         );
-
-        GUI.color = oldColor;
     }
 
     private static void DrawResults(
@@ -412,7 +425,7 @@ public sealed class GuideOverlay : MonoBehaviour
                     x,
                     y,
                     w,
-                    80
+                    70
                 ),
                 "攻略数据库尚未加载。",
                 _body
@@ -455,9 +468,11 @@ public sealed class GuideOverlay : MonoBehaviour
                 start + ResultsPerPage
             );
 
-        float rowH = 42f;
+        float rowH =
+            42f;
 
-        float currentY = y;
+        float currentY =
+            y;
 
         for (
             int i = start;
@@ -465,20 +480,20 @@ public sealed class GuideOverlay : MonoBehaviour
             i++
         )
         {
-            var n = _results[i];
+            var node =
+                _results[i];
 
             string marker =
-                n.Id == _selectedId
-                    ? "▶ "
-                    : "";
-
-            string kind =
-                KindName(
-                    n.Kind
-                );
+                node.Id
+                ==
+                _selectedId
+                    ?
+                    "▶ "
+                    :
+                    "";
 
             string label =
-                $"{marker}[{kind}] {n.Name}\n#{n.Id}";
+                $"{marker}[{KindName(node.Kind)}] {node.Name}";
 
             if (
                 GUI.Button(
@@ -494,17 +509,14 @@ public sealed class GuideOverlay : MonoBehaviour
             )
             {
                 NavigateTo(
-                    n.Id,
+                    node.Id,
                     true
                 );
             }
 
-            currentY += rowH;
+            currentY +=
+                rowH;
         }
-
-        // =========================
-        // 分页
-        // =========================
 
         float navY =
             y + h - 32;
@@ -537,7 +549,9 @@ public sealed class GuideOverlay : MonoBehaviour
                 "下一页"
             )
             &&
-            _resultPage + 1 < pageCount
+            _resultPage + 1
+            <
+            pageCount
         )
         {
             _resultPage++;
@@ -596,16 +610,15 @@ public sealed class GuideOverlay : MonoBehaviour
                     w,
                     80
                 ),
-                "从左侧选择一个事件、仪式或结局。",
+                "从左侧选择一个剧情节点。",
                 _body
             );
 
             return;
         }
 
-        // =========================
-        // 返回
-        // =========================
+        float cy =
+            y;
 
         if (
             _history.Count > 0
@@ -613,54 +626,33 @@ public sealed class GuideOverlay : MonoBehaviour
             GUI.Button(
                 new Rect(
                     x,
-                    y,
-                    68,
+                    cy,
+                    70,
                     26
                 ),
                 "← 返回"
             )
         )
         {
-            int prev =
+            _selectedId =
                 _history.Pop();
-
-            _selectedId = prev;
 
             return;
         }
 
-        // =========================
-        // 标题
-        // =========================
-
         GUI.Label(
             new Rect(
-                x + 78,
-                y + 1,
-                w - 78,
-                28
+                x + 80,
+                cy,
+                w - 80,
+                34
             ),
             $"{KindName(node.Kind)} · {node.Name}",
             _title
         );
 
-        GUI.Label(
-            new Rect(
-                x + 78,
-                y + 30,
-                w - 78,
-                20
-            ),
-            $"ID：{node.Id}",
-            _small
-        );
-
-        float cy =
-            y + 62;
-
-        // =========================
-        // 触发条件
-        // =========================
+        cy +=
+            48;
 
         GUI.Label(
             new Rect(
@@ -669,45 +661,27 @@ public sealed class GuideOverlay : MonoBehaviour
                 w,
                 24
             ),
-            "触发条件",
+            "怎么触发？",
             _subTitle
         );
 
-        cy += 27;
+        cy +=
+            27;
 
         string condition =
             string.IsNullOrWhiteSpace(
                 node.HumanCondition
             )
-            ?
-            "无特殊条件"
-            :
-            node.HumanCondition;
-
-        var conditionContent =
-            new GUIContent(
-                condition
-            );
-
-        float calculatedConditionHeight =
-            _body != null
                 ?
-                _body.CalcHeight(
-                    conditionContent,
-                    w - 12
-                )
+                "没有额外要求。"
                 :
-                80;
+                node.HumanCondition;
 
-        float condH =
-            Math.Min(
-                180,
-                Math.Max(
-                    52,
-                    calculatedConditionHeight
-                    +
-                    14
-                )
+        float conditionHeight =
+            EstimateTextHeight(
+                condition,
+                58,
+                190
             );
 
         GUI.Box(
@@ -715,30 +689,80 @@ public sealed class GuideOverlay : MonoBehaviour
                 x,
                 cy,
                 w,
-                condH
+                conditionHeight
             ),
             ""
         );
 
         GUI.Label(
             new Rect(
-                x + 8,
-                cy + 6,
-                w - 16,
-                condH - 12
+                x + 9,
+                cy + 7,
+                w - 18,
+                conditionHeight - 14
             ),
             condition,
             _body
         );
 
         cy +=
-            condH
+            conditionHeight
             +
             12;
 
-        // =========================
-        // 结局文本
-        // =========================
+        if (
+            !string.IsNullOrWhiteSpace(
+                node.HumanOutcome
+            )
+        )
+        {
+            GUI.Label(
+                new Rect(
+                    x,
+                    cy,
+                    w,
+                    24
+                ),
+                "接下来会怎样？",
+                _subTitle
+            );
+
+            cy +=
+                27;
+
+            float outcomeHeight =
+                EstimateTextHeight(
+                    node.HumanOutcome,
+                    52,
+                    135
+                );
+
+            GUI.Box(
+                new Rect(
+                    x,
+                    cy,
+                    w,
+                    outcomeHeight
+                ),
+                ""
+            );
+
+            GUI.Label(
+                new Rect(
+                    x + 9,
+                    cy + 7,
+                    w - 18,
+                    outcomeHeight - 14
+                ),
+                node.HumanOutcome,
+                _body
+            );
+
+            cy +=
+                outcomeHeight
+                +
+                12;
+        }
 
         if (
             !string.IsNullOrWhiteSpace(
@@ -753,51 +777,33 @@ public sealed class GuideOverlay : MonoBehaviour
                     w,
                     24
                 ),
-                "结局内容",
+                "结局说明",
                 _subTitle
             );
 
-            cy += 26;
+            cy +=
+                27;
 
-            string txt =
+            string result =
                 node.ResultText!;
 
             if (
-                txt.Length
+                result.Length
                 >
-                900
+                700
             )
             {
-                txt =
-                    txt[..900]
+                result =
+                    result[..700]
                     +
                     "\n……";
             }
 
-            var resultContent =
-                new GUIContent(
-                    txt
-                );
-
-            float calculatedResultHeight =
-                _body != null
-                    ?
-                    _body.CalcHeight(
-                        resultContent,
-                        w - 12
-                    )
-                    :
-                    100;
-
-            float resultH =
-                Math.Min(
-                    190,
-                    Math.Max(
-                        70,
-                        calculatedResultHeight
-                        +
-                        12
-                    )
+            float resultHeight =
+                EstimateTextHeight(
+                    result,
+                    65,
+                    145
                 );
 
             GUI.Box(
@@ -805,31 +811,27 @@ public sealed class GuideOverlay : MonoBehaviour
                     x,
                     cy,
                     w,
-                    resultH
+                    resultHeight
                 ),
                 ""
             );
 
             GUI.Label(
                 new Rect(
-                    x + 8,
-                    cy + 6,
-                    w - 16,
-                    resultH - 12
+                    x + 9,
+                    cy + 7,
+                    w - 18,
+                    resultHeight - 14
                 ),
-                txt,
+                result,
                 _body
             );
 
             cy +=
-                resultH
+                resultHeight
                 +
-                10;
+                12;
         }
-
-        // =========================
-        // 后续分支
-        // =========================
 
         GUI.Label(
             new Rect(
@@ -838,16 +840,19 @@ public sealed class GuideOverlay : MonoBehaviour
                 w,
                 24
             ),
-            $"后续分支（{node.Links.Count}）",
+            node.Links.Count > 0
+                ?
+                "可以继续看："
+                :
+                "后续",
             _subTitle
         );
 
-        cy += 27;
+        cy +=
+            27;
 
         if (
-            node.Links.Count
-            ==
-            0
+            node.Links.Count == 0
         )
         {
             GUI.Label(
@@ -855,22 +860,23 @@ public sealed class GuideOverlay : MonoBehaviour
                     x,
                     cy,
                     w,
-                    48
+                    45
                 ),
                 node.Kind
-                    ==
-                    NodeKind.AfterStory
+                ==
+                NodeKind.AfterStory
                     ?
-                    "这是结局 / 后日谈节点。"
+                    "这里已经是结局 / 后日谈。"
                     :
-                    "当前配置中没有解析到直接后续节点。",
+                    "没有解析到直接后续剧情。",
                 _body
             );
 
             return;
         }
 
-        int shown = 0;
+        int shown =
+            0;
 
         foreach (
             var link
@@ -879,21 +885,16 @@ public sealed class GuideOverlay : MonoBehaviour
         )
         {
             if (
-                shown
-                >=
-                7
+                shown >= 6
             )
             {
                 break;
             }
 
-            string target =
-                _db.DisplayTarget(
+            string label =
+                _db.DescribeTransition(
                     link
                 );
-
-            string label =
-                $"{link.Label}\n→ {target}  #{link.TargetId}";
 
             if (
                 GUI.Button(
@@ -914,7 +915,8 @@ public sealed class GuideOverlay : MonoBehaviour
                 );
             }
 
-            cy += 48;
+            cy +=
+                48;
 
             shown++;
         }
@@ -932,10 +934,54 @@ public sealed class GuideOverlay : MonoBehaviour
                     w,
                     24
                 ),
-                $"还有 {node.Links.Count - shown} 条分支；可直接搜索目标 ID。",
+                $"还有 {node.Links.Count - shown} 条分支，可搜索剧情名称继续查看。",
                 _small
             );
         }
+    }
+
+    private static float EstimateTextHeight(
+        string text,
+        float minimum,
+        float maximum
+    )
+    {
+        int lines =
+            1;
+
+        foreach (
+            char c
+            in
+            text
+        )
+        {
+            if (c == '\n')
+            {
+                lines++;
+            }
+        }
+
+        // 再按中文大约每 28~32 字一行估算自动换行。
+        lines +=
+            text.Length
+            /
+            34;
+
+        float height =
+            18f
+            *
+            lines
+            +
+            18f;
+
+        return
+            Math.Max(
+                minimum,
+                Math.Min(
+                    maximum,
+                    height
+                )
+            );
     }
 
     private static void NavigateTo(
@@ -965,7 +1011,8 @@ public sealed class GuideOverlay : MonoBehaviour
             );
         }
 
-        _selectedId = id;
+        _selectedId =
+            id;
     }
 
     private static void RefreshSearch()
@@ -988,16 +1035,14 @@ public sealed class GuideOverlay : MonoBehaviour
             _search;
 
         _results =
-            _db
-                .Search(_search)
-                .ToList();
+            _db.Search(
+                _search
+            )
+            .ToList();
 
-        _resultPage = 0;
+        _resultPage =
+            0;
     }
-
-    // =============================
-    // 拖动窗口
-    // =============================
 
     private static void HandleDrag(
         Event? e
@@ -1013,20 +1058,25 @@ public sealed class GuideOverlay : MonoBehaviour
                 _panel.x,
                 _panel.y,
                 _panel.width - 100,
-                50
+                52
             );
 
         if (
-            e.type == EventType.MouseDown
+            e.type
+            ==
+            EventType.MouseDown
             &&
-            e.button == 0
+            e.button
+            ==
+            0
             &&
             titleBar.Contains(
                 e.mousePosition
             )
         )
         {
-            _dragging = true;
+            _dragging =
+                true;
 
             _dragOffset =
                 new Vector2(
@@ -1067,7 +1117,8 @@ public sealed class GuideOverlay : MonoBehaviour
             EventType.MouseUp
         )
         {
-            _dragging = false;
+            _dragging =
+                false;
         }
     }
 
@@ -1090,7 +1141,9 @@ public sealed class GuideOverlay : MonoBehaviour
                 0,
                 Math.Min(
                     _panel.x,
-                    Screen.width - _panel.width
+                    Screen.width
+                    -
+                    _panel.width
                 )
             );
 
@@ -1104,13 +1157,13 @@ public sealed class GuideOverlay : MonoBehaviour
             );
     }
 
-    // =============================
-    // IMGUI 样式
-    // =============================
-
     private static void EnsureStyles()
     {
-        if (_panelTex == null)
+        if (
+            _panelTex
+            ==
+            null
+        )
         {
             _panelTex =
                 new Texture2D(
@@ -1132,7 +1185,11 @@ public sealed class GuideOverlay : MonoBehaviour
             _panelTex.Apply();
         }
 
-        if (_softTex == null)
+        if (
+            _softTex
+            ==
+            null
+        )
         {
             _softTex =
                 new Texture2D(
@@ -1154,42 +1211,47 @@ public sealed class GuideOverlay : MonoBehaviour
             _softTex.Apply();
         }
 
-        /*
-         * 注意：
-         *
-         * 这里绝对不能写：
-         *
-         * new GUIStyle(GUI.skin.label)
-         * new GUIStyle(GUI.skin.button)
-         *
-         * 因为游戏生成的 IL2CPP interop GUIStyle
-         * 不存在普通 Unity 的复制构造函数。
-         */
-
-        if (_boxStyle == null)
+        if (
+            _boxStyle
+            ==
+            null
+        )
         {
             _boxStyle =
                 new GUIStyle();
 
-            _boxStyle.normal.background =
-                _panelTex;
+            _boxStyle
+                .normal
+                .background =
+                    _panelTex;
         }
 
-        if (_softBoxStyle == null)
+        if (
+            _softBoxStyle
+            ==
+            null
+        )
         {
             _softBoxStyle =
                 new GUIStyle();
 
-            _softBoxStyle.normal.background =
-                _softTex;
+            _softBoxStyle
+                .normal
+                .background =
+                    _softTex;
         }
 
-        if (_title == null)
+        if (
+            _title
+            ==
+            null
+        )
         {
             _title =
                 new GUIStyle();
 
-            _title.fontSize = 16;
+            _title.fontSize =
+                16;
 
             _title.fontStyle =
                 FontStyle.Bold;
@@ -1197,16 +1259,22 @@ public sealed class GuideOverlay : MonoBehaviour
             _title.wordWrap =
                 true;
 
-            _title.normal.textColor =
-                new Color(
-                    0.86f,
-                    0.94f,
-                    1f,
-                    1f
-                );
+            _title
+                .normal
+                .textColor =
+                    new Color(
+                        0.86f,
+                        0.94f,
+                        1f,
+                        1f
+                    );
         }
 
-        if (_subTitle == null)
+        if (
+            _subTitle
+            ==
+            null
+        )
         {
             _subTitle =
                 new GUIStyle();
@@ -1217,16 +1285,22 @@ public sealed class GuideOverlay : MonoBehaviour
             _subTitle.fontStyle =
                 FontStyle.Bold;
 
-            _subTitle.normal.textColor =
-                new Color(
-                    0.64f,
-                    0.84f,
-                    0.98f,
-                    1f
-                );
+            _subTitle
+                .normal
+                .textColor =
+                    new Color(
+                        0.64f,
+                        0.84f,
+                        0.98f,
+                        1f
+                    );
         }
 
-        if (_body == null)
+        if (
+            _body
+            ==
+            null
+        )
         {
             _body =
                 new GUIStyle();
@@ -1237,11 +1311,17 @@ public sealed class GuideOverlay : MonoBehaviour
             _body.wordWrap =
                 true;
 
-            _body.normal.textColor =
-                Color.white;
+            _body
+                .normal
+                .textColor =
+                    Color.white;
         }
 
-        if (_small == null)
+        if (
+            _small
+            ==
+            null
+        )
         {
             _small =
                 new GUIStyle();
@@ -1252,16 +1332,22 @@ public sealed class GuideOverlay : MonoBehaviour
             _small.wordWrap =
                 true;
 
-            _small.normal.textColor =
-                new Color(
-                    0.67f,
-                    0.73f,
-                    0.78f,
-                    1f
-                );
+            _small
+                .normal
+                .textColor =
+                    new Color(
+                        0.67f,
+                        0.73f,
+                        0.78f,
+                        1f
+                    );
         }
 
-        if (_wrapButton == null)
+        if (
+            _wrapButton
+            ==
+            null
+        )
         {
             _wrapButton =
                 new GUIStyle();
@@ -1275,33 +1361,35 @@ public sealed class GuideOverlay : MonoBehaviour
             _wrapButton.alignment =
                 TextAnchor.MiddleLeft;
 
-            _wrapButton.padding =
-                new RectOffset(
-                    8,
-                    8,
-                    4,
-                    4
-                );
+            _wrapButton
+                .normal
+                .background =
+                    _softTex;
 
-            // 自己设置按钮背景，
-            // 不依赖 GUI.skin.button 的复制构造
-            _wrapButton.normal.background =
-                _softTex;
+            _wrapButton
+                .hover
+                .background =
+                    _panelTex;
 
-            _wrapButton.hover.background =
-                _panelTex;
+            _wrapButton
+                .active
+                .background =
+                    _panelTex;
 
-            _wrapButton.active.background =
-                _panelTex;
+            _wrapButton
+                .normal
+                .textColor =
+                    Color.white;
 
-            _wrapButton.normal.textColor =
-                Color.white;
+            _wrapButton
+                .hover
+                .textColor =
+                    Color.white;
 
-            _wrapButton.hover.textColor =
-                Color.white;
-
-            _wrapButton.active.textColor =
-                Color.white;
+            _wrapButton
+                .active
+                .textColor =
+                    Color.white;
         }
     }
 
