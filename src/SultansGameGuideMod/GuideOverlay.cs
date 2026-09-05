@@ -721,7 +721,7 @@ public sealed class GuideOverlay : MonoBehaviour
                 330,
                 22
             ),
-            "v0.4.5 · 右栏可滚动",
+            "v0.4.7 · 长文本布局修复",
             _small
         );
 
@@ -1402,8 +1402,7 @@ public sealed class GuideOverlay : MonoBehaviour
         float conditionHeight =
             EstimateTextHeight(
                 condition,
-                58,
-                220
+                58
             );
 
         float outcomeHeight =
@@ -1418,8 +1417,7 @@ public sealed class GuideOverlay : MonoBehaviour
             outcomeHeight =
                 EstimateTextHeight(
                     node.HumanOutcome,
-                    52,
-                    180
+                    52
                 );
         }
 
@@ -1454,8 +1452,7 @@ public sealed class GuideOverlay : MonoBehaviour
             resultHeight =
                 EstimateTextHeight(
                     result,
-                    70,
-                    620
+                    70
                 );
         }
 
@@ -1814,44 +1811,80 @@ public sealed class GuideOverlay : MonoBehaviour
 
     private static float EstimateTextHeight(
         string text,
-        float minimum,
-        float maximum
+        float minimum
     )
     {
-        int lines =
-            1;
-
-        foreach (
-            char c
-            in
-            text
+        if (
+            string.IsNullOrEmpty(
+                text
+            )
         )
         {
-            if (c == '\n')
-            {
-                lines++;
-            }
+            return minimum;
         }
 
-        lines +=
-            text.Length
-            /
-            34;
+        // 这里故意“略微高估”中文换行高度。
+        // 右栏宽度大约 500~560px，13px 中文字体实际一行通常能放 30 多字；
+        // 按 27 字一行估算，可以确保文本框宁可多留一点空白，也绝不和下一块内容重叠。
+        const int CharactersPerVisualLine = 27;
+        const float LineHeight = 20f;
+        const float VerticalPadding = 20f;
+
+        int visualLines = 0;
+
+        string normalized =
+            text.Replace(
+                "\r\n",
+                "\n"
+            )
+            .Replace(
+                '\r',
+                '\n'
+            );
+
+        string[] logicalLines =
+            normalized.Split(
+                '\n'
+            );
+
+        foreach (
+            string line
+            in
+            logicalLines
+        )
+        {
+            int length =
+                Math.Max(
+                    1,
+                    line.Length
+                );
+
+            visualLines +=
+                Math.Max(
+                    1,
+                    (
+                        length
+                        +
+                        CharactersPerVisualLine
+                        -
+                        1
+                    )
+                    /
+                    CharactersPerVisualLine
+                );
+        }
 
         float height =
-            18f
+            visualLines
             *
-            lines
+            LineHeight
             +
-            18f;
+            VerticalPadding;
 
         return
             Math.Max(
                 minimum,
-                Math.Min(
-                    maximum,
-                    height
-                )
+                height
             );
     }
 
@@ -2212,6 +2245,9 @@ public sealed class GuideOverlay : MonoBehaviour
 
             _body.wordWrap =
                 true;
+
+            _body.clipping =
+                TextClipping.Clip;
 
             _body
                 .normal
