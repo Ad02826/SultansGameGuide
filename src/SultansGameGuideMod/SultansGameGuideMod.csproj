@@ -76,5 +76,14 @@
       <HintPath>lib/interop/Game.dll</HintPath>
       <Private>false</Private>
     </Reference>
+
+    <Reference Include="Core">
+      <HintPath>lib/interop/Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Il2CppSystem.Core">
+      <HintPath>lib/interop/Il2CppSystem.Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 </Project>
