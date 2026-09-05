@@ -58,5 +58,18 @@
       <HintPath>lib/interop/UnityEngine.SharedInternalsModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
+
+    <Reference Include="Assembly-CSharp">
+      <HintPath>lib/interop/Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.UI">
+      <HintPath>lib/interop/UnityEngine.UI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.UIModule">
+      <HintPath>lib/interop/UnityEngine.UIModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 </Project>
