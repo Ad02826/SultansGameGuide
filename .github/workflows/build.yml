@@ -1,0 +1,58 @@
+name: Build SultansGameGuide MOD
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main", "master" ]
+    paths:
+      - "src/**"
+      - "NuGet.config"
+      - ".github/workflows/build.yml"
+  pull_request:
+    paths:
+      - "src/**"
+      - "NuGet.config"
+      - ".github/workflows/build.yml"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Verify Sultan IL2CPP interop references
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ls -lh src/SultansGameGuideMod/lib/interop
+          test -f src/SultansGameGuideMod/lib/interop/UnityEngine.CoreModule.dll
+          test -f src/SultansGameGuideMod/lib/interop/Il2Cppmscorlib.dll
+
+      - name: Restore dependencies
+        run: dotnet restore src/SultansGameGuideMod/SultansGameGuideMod.csproj --configfile NuGet.config
+
+      - name: Build Release DLL
+        run: dotnet build src/SultansGameGuideMod/SultansGameGuideMod.csproj -c Release --no-restore
+
+      - name: Prepare MOD package
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p dist/BepInEx/plugins/SultansGameGuide
+          cp src/SultansGameGuideMod/bin/Release/net6.0/SultansGameGuide.dll              dist/BepInEx/plugins/SultansGameGuide/
+          cp README.txt dist/
+
+      - name: Upload compiled MOD
+        uses: actions/upload-artifact@v4
+        with:
+          name: SultansGameGuide-Mod
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
