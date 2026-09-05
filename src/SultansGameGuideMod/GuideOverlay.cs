@@ -193,7 +193,7 @@ public sealed class GuideOverlay : MonoBehaviour
 
             Rect openRect =
                 new Rect(
-                    14,
+                    220,
                     80,
                     118,
                     38
@@ -219,7 +219,7 @@ public sealed class GuideOverlay : MonoBehaviour
 
             Rect miniRect =
                 new Rect(
-                    14,
+                    220,
                     80,
                     138,
                     40
@@ -666,6 +666,19 @@ public sealed class GuideOverlay : MonoBehaviour
 
     private static void DrawPanel()
     {
+        var oldGuiColor = GUI.color;
+        GUI.color = Color.white;
+
+        if (_panelTex != null)
+        {
+            GUI.DrawTexture(
+                _panel,
+                _panelTex,
+                ScaleMode.StretchToFill,
+                false
+            );
+        }
+
         GUI.Box(
             _panel,
             "",
@@ -702,7 +715,7 @@ public sealed class GuideOverlay : MonoBehaviour
                 330,
                 22
             ),
-            "v0.4.0 · 当前剧情自动跟随",
+            "v0.4.4 · 不透明界面",
             _small
         );
 
@@ -918,13 +931,26 @@ public sealed class GuideOverlay : MonoBehaviour
         float contentH =
             h - 124;
 
-        GUI.Box(
+        var leftPanelRect =
             new Rect(
                 x + 12,
                 contentY,
                 leftW - 12,
                 contentH
-            ),
+            );
+
+        if (_softTex != null)
+        {
+            GUI.DrawTexture(
+                leftPanelRect,
+                _softTex,
+                ScaleMode.StretchToFill,
+                false
+            );
+        }
+
+        GUI.Box(
+            leftPanelRect,
             "",
             _softBoxStyle
         );
@@ -983,13 +1009,26 @@ public sealed class GuideOverlay : MonoBehaviour
             );
         }
 
-        GUI.Box(
+        var rightPanelRect =
             new Rect(
                 splitX,
                 contentY,
                 w - (splitX - x) - 12,
                 contentH
-            ),
+            );
+
+        if (_softTex != null)
+        {
+            GUI.DrawTexture(
+                rightPanelRect,
+                _softTex,
+                ScaleMode.StretchToFill,
+                false
+            );
+        }
+
+        GUI.Box(
+            rightPanelRect,
             "",
             _softBoxStyle
         );
@@ -1000,6 +1039,8 @@ public sealed class GuideOverlay : MonoBehaviour
             w - (splitX - x) - 40,
             contentH - 24
         );
+
+        GUI.color = oldGuiColor;
     }
 
     private static void DrawRuntimeResults(
@@ -1908,9 +1949,9 @@ public sealed class GuideOverlay : MonoBehaviour
                 0,
                 0,
                 new Color(
-                    0.035f,
-                    0.050f,
-                    0.070f,
+                    0.055f,
+                    0.075f,
+                    0.105f,
                     1.00f
                 )
             );
@@ -1935,9 +1976,9 @@ public sealed class GuideOverlay : MonoBehaviour
                 0,
                 0,
                 new Color(
-                    0.065f,
                     0.085f,
-                    0.110f,
+                    0.115f,
+                    0.150f,
                     1.00f
                 )
             );
@@ -1961,9 +2002,9 @@ public sealed class GuideOverlay : MonoBehaviour
                 0,
                 0,
                 new Color(
-                    0.105f,
-                    0.220f,
-                    0.300f,
+                    0.125f,
+                    0.245f,
+                    0.335f,
                     1.00f
                 )
             );
