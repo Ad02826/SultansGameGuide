@@ -3094,6 +3094,26 @@ public sealed class GuideDatabase
                     continue;
                 }
 
+                // 关键语义：节点自己的结算再次 action.rite / event_on 自己，
+                // 表示“结算后续存 / 重新挂回 / 重新武装监听”，
+                // 不是“这个节点最初是怎么被触发出来的”。
+                //
+                // 例如《治理家业》自己的 settlement_prior 中大量存在
+                // action.rite = 5000001；它们属于治理家业内部结算后的续存，
+                // 不能反向显示成《治理家业》的触发来源。
+                if (
+                    source.Id
+                    ==
+                    target.Id
+                    &&
+                    source.Kind
+                    ==
+                    target.Kind
+                )
+                {
+                    continue;
+                }
+
                 if (
                     target.Kind
                     ==

@@ -1108,7 +1108,7 @@ public sealed class GuideOverlay : MonoBehaviour
                 330,
                 22
             ),
-            "v0.4.88 · 触发机制预览版",
+            "v0.4.89 · 触发关系修正版",
             _small
         );
 
