@@ -119,6 +119,7 @@ public sealed class GuideOverlay : MonoBehaviour
     private static Texture2D? _softTex;
     private static Texture2D? _triggerGroupTex;
     private static Texture2D? _triggerBorderTex;
+    private static Texture2D? _branchBorderTex;
     private static Texture2D? _stateMetCircleTex;
     private static Texture2D? _stateUnmetCircleTex;
     private static Texture2D? _stateUnknownCircleTex;
@@ -1116,7 +1117,7 @@ public sealed class GuideOverlay : MonoBehaviour
                 330,
                 22
             ),
-            "v0.4.95 · 圆形状态图标",
+            "v0.4.97 · 分支整框修复",
             _small
         );
 
@@ -2112,25 +2113,48 @@ public sealed class GuideOverlay : MonoBehaviour
                         out var rows
                     );
 
-                var buttonRect =
-                    new Rect(
-                        triggerInnerX,
-                        cy,
-                        triggerInnerW,
-                        38
+                float branchStartY =
+                    cy;
+
+                float branchHeight =
+                    EstimateTriggerBranchContainerHeight(
+                        branch,
+                        rows,
+                        expanded
                     );
 
-                string arrow =
-                    expanded
-                        ?
-                        "▼"
-                        :
-                        "▶";
+                DrawTriggerBranchFrame(
+                    new Rect(
+                        triggerInnerX,
+                        branchStartY,
+                        triggerInnerW,
+                        branchHeight
+                    )
+                );
 
+                float headerX =
+                    triggerInnerX + 6f;
+
+                float headerY =
+                    branchStartY + 6f;
+
+                float headerW =
+                    triggerInnerW - 12f;
+
+                var buttonRect =
+                    new Rect(
+                        headerX,
+                        headerY,
+                        headerW,
+                        36f
+                    );
+
+                // 用空文字按钮只负责点击/悬停。
+                // 箭头、状态图标、分支名分开绘制，彻底避免文字与图标重叠。
                 if (
                     GUI.Button(
                         buttonRect,
-                        $"{arrow}      {branch.Name}",
+                        "",
                         _wrapButton
                     )
                 )
@@ -2151,19 +2175,52 @@ public sealed class GuideOverlay : MonoBehaviour
                     }
                 }
 
-                // 分支总状态放到展开箭头之后、分支名称之前。
+                string arrow =
+                    expanded
+                        ?
+                        "▼"
+                        :
+                        "▶";
+
+                GUI.Label(
+                    new Rect(
+                        headerX + 8f,
+                        headerY + 6f,
+                        18f,
+                        24f
+                    ),
+                    arrow,
+                    _body
+                );
+
                 DrawConditionStateIcon(
                     new Rect(
-                        triggerInnerX + 24f,
-                        cy + 7f,
+                        headerX + 30f,
+                        headerY + 7f,
                         22f,
                         22f
                     ),
                     state
                 );
 
-                cy +=
-                    42f;
+                GUI.Label(
+                    new Rect(
+                        headerX + 60f,
+                        headerY + 4f,
+                        Math.Max(
+                            40f,
+                            headerW - 68f
+                        ),
+                        28f
+                    ),
+                    branch.Name,
+                    _body
+                );
+
+                cy =
+                    branchStartY
+                    +
+                    48f;
 
                 if (
                     expanded
@@ -2172,14 +2229,18 @@ public sealed class GuideOverlay : MonoBehaviour
                     DrawExpandedTriggerBranch(
                         branch,
                         rows,
-                        triggerInnerX + 8f,
+                        triggerInnerX + 12f,
                         ref cy,
-                        triggerInnerW - 16f
+                        triggerInnerW - 24f
                     );
-
-                    cy +=
-                        8f;
                 }
+
+                cy =
+                    branchStartY
+                    +
+                    branchHeight
+                    +
+                    8f;
             }
         }
 
@@ -2463,9 +2524,6 @@ public sealed class GuideOverlay : MonoBehaviour
             var branch =
                 node.TriggerBranches[i];
 
-            height +=
-                42f;
-
             string key =
                 BuildTriggerBranchKey(
                     node,
@@ -2473,29 +2531,94 @@ public sealed class GuideOverlay : MonoBehaviour
                     i
                 );
 
-            if (
+            bool expanded =
                 _expandedTriggerBranches.Contains(
                     key
-                )
-            )
-            {
-                EvaluateTriggerBranch(
-                    branch,
-                    out var rows
                 );
 
-                height +=
-                    EstimateExpandedTriggerBranchHeight(
-                        branch,
-                        rows
-                    )
-                    +
-                    8f;
-            }
+            EvaluateTriggerBranch(
+                branch,
+                out var rows
+            );
+
+            height +=
+                EstimateTriggerBranchContainerHeight(
+                    branch,
+                    rows,
+                    expanded
+                )
+                +
+                8f;
         }
 
         return
             height;
+    }
+
+    private static float EstimateTriggerBranchContainerHeight(
+        GuideTriggerBranch branch,
+        List<ConditionCheckRow> rows,
+        bool expanded
+    )
+    {
+        float height =
+            48f;
+
+        if (
+            expanded
+        )
+        {
+            height +=
+                EstimateExpandedTriggerBranchHeight(
+                    branch,
+                    rows
+                );
+        }
+
+        return
+            height
+            +
+            6f;
+    }
+
+    private static void DrawTriggerBranchFrame(
+        Rect rect
+    )
+    {
+        if (
+            _branchBorderTex != null
+        )
+        {
+            GUI.DrawTexture(
+                rect,
+                _branchBorderTex,
+                ScaleMode.StretchToFill,
+                false
+            );
+        }
+
+        if (
+            _softTex != null
+        )
+        {
+            GUI.DrawTexture(
+                new Rect(
+                    rect.x + 1f,
+                    rect.y + 1f,
+                    Math.Max(
+                        0f,
+                        rect.width - 2f
+                    ),
+                    Math.Max(
+                        0f,
+                        rect.height - 2f
+                    )
+                ),
+                _softTex,
+                ScaleMode.StretchToFill,
+                false
+            );
+        }
     }
 
     private static float EstimateExpandedTriggerBranchHeight(
@@ -2594,25 +2717,14 @@ public sealed class GuideOverlay : MonoBehaviour
                 rows
             );
 
-        GUI.Box(
-            new Rect(
-                x,
-                startY,
-                w,
-                estimated
-            ),
-            "",
-            _softBoxStyle
-        );
-
         float innerX =
-            x + 10f;
+            x;
 
         float innerW =
-            w - 20f;
+            w;
 
         cy +=
-            10f;
+            4f;
 
         string explanation =
             BuildNaturalTriggerExplanation(
@@ -4079,6 +4191,32 @@ public sealed class GuideOverlay : MonoBehaviour
             );
 
             _triggerBorderTex.Apply();
+        }
+
+        if (
+            _branchBorderTex
+            ==
+            null
+        )
+        {
+            _branchBorderTex =
+                new Texture2D(
+                    1,
+                    1
+                );
+
+            _branchBorderTex.SetPixel(
+                0,
+                0,
+                new Color(
+                    0.16f,
+                    0.28f,
+                    0.36f,
+                    1.00f
+                )
+            );
+
+            _branchBorderTex.Apply();
         }
 
         if (
