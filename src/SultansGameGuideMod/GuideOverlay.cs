@@ -111,7 +111,6 @@ public sealed class GuideOverlay : MonoBehaviour
     private static GUIStyle? _softBoxStyle;
     private static GUIStyle? _triggerTitleStyle;
     private static GUIStyle? _statusTitleStyle;
-    private static GUIStyle? _stateIconSymbolStyle;
     private static GUIStyle? _activeButtonStyle;
     private static GUIStyle? _selectedButtonStyle;
 
@@ -120,9 +119,6 @@ public sealed class GuideOverlay : MonoBehaviour
     private static Texture2D? _triggerGroupTex;
     private static Texture2D? _triggerBorderTex;
     private static Texture2D? _branchBorderTex;
-    private static Texture2D? _stateMetCircleTex;
-    private static Texture2D? _stateUnmetCircleTex;
-    private static Texture2D? _stateUnknownCircleTex;
     private static Texture2D? _activeTex;
     private static Texture2D? _selectedTex;
 
@@ -1117,7 +1113,7 @@ public sealed class GuideOverlay : MonoBehaviour
                 330,
                 22
             ),
-            "v0.4.98 · 状态图标对齐精简",
+            "v0.4.99 · 状态符号回退与标题精简",
             _small
         );
 
@@ -1978,31 +1974,6 @@ public sealed class GuideOverlay : MonoBehaviour
             return;
         }
 
-        string stateTag =
-            node.Id
-            ==
-            _currentRiteId
-                ?
-                "【正在操作】 "
-                :
-                (
-                    _runtimeRiteIds.Contains(
-                        node.Id
-                    )
-                        ?
-                        (
-                            _startedRiteIds.Contains(
-                                node.Id
-                            )
-                                ?
-                                "【地图·已开始】 "
-                                :
-                                "【地图·可操作】 "
-                        )
-                        :
-                        ""
-                );
-
         GUI.Label(
             new Rect(
                 localX + 80,
@@ -2010,7 +1981,7 @@ public sealed class GuideOverlay : MonoBehaviour
                 localW - 80,
                 38
             ),
-            $"{stateTag}{KindName(node.Kind)} · {node.Name}",
+            $"{KindName(node.Kind)} · {node.Name}",
             _title
         );
 
@@ -2193,13 +2164,23 @@ public sealed class GuideOverlay : MonoBehaviour
                     _body
                 );
 
+                DrawConditionStateIcon(
+                    new Rect(
+                        headerX + 28f,
+                        headerY + 4f,
+                        22f,
+                        28f
+                    ),
+                    state
+                );
+
                 GUI.Label(
                     new Rect(
-                        headerX + 32f,
+                        headerX + 54f,
                         headerY + 4f,
                         Math.Max(
                             40f,
-                            headerW - 40f
+                            headerW - 62f
                         ),
                         28f
                     ),
@@ -2761,10 +2742,10 @@ public sealed class GuideOverlay : MonoBehaviour
 
             DrawConditionStateIcon(
                 new Rect(
-                    innerX + 74f,
-                    cy + 3f,
-                    16f,
-                    16f
+                    innerX + 76f,
+                    cy - 1f,
+                    24f,
+                    24f
                 ),
                 GetConditionRowsOverallState(
                     rows
@@ -2976,31 +2957,6 @@ public sealed class GuideOverlay : MonoBehaviour
         ConditionRuntimeState state
     )
     {
-        Texture2D? circle =
-            state switch
-            {
-                ConditionRuntimeState.Met =>
-                    _stateMetCircleTex,
-
-                ConditionRuntimeState.Unmet =>
-                    _stateUnmetCircleTex,
-
-                _ =>
-                    _stateUnknownCircleTex
-            };
-
-        if (
-            circle != null
-        )
-        {
-            GUI.DrawTexture(
-                rect,
-                circle,
-                ScaleMode.StretchToFill,
-                true
-            );
-        }
-
         string symbol =
             state switch
             {
@@ -3008,16 +2964,56 @@ public sealed class GuideOverlay : MonoBehaviour
                     "✓",
 
                 ConditionRuntimeState.Unmet =>
-                    "×",
+                    "✗",
 
                 _ =>
                     "?"
             };
 
+        var style =
+            new GUIStyle();
+
+        style.fontSize =
+            16;
+
+        style.fontStyle =
+            FontStyle.Bold;
+
+        style.alignment =
+            TextAnchor.MiddleCenter;
+
+        style.normal.textColor =
+            state switch
+            {
+                ConditionRuntimeState.Met =>
+                    new Color(
+                        0.23f,
+                        0.82f,
+                        0.39f,
+                        1f
+                    ),
+
+                ConditionRuntimeState.Unmet =>
+                    new Color(
+                        0.95f,
+                        0.27f,
+                        0.31f,
+                        1f
+                    ),
+
+                _ =>
+                    new Color(
+                        0.73f,
+                        0.77f,
+                        0.82f,
+                        1f
+                    )
+            };
+
         GUI.Label(
             rect,
             symbol,
-            _stateIconSymbolStyle
+            style
         );
     }
 
@@ -3982,89 +3978,6 @@ public sealed class GuideOverlay : MonoBehaviour
             );
     }
 
-    private static Texture2D CreateStateCircleTexture(
-        Color fill
-    )
-    {
-        const int size =
-            32;
-
-        var tex =
-            new Texture2D(
-                size,
-                size
-            );
-
-        float center =
-            (size - 1)
-            *
-            0.5f;
-
-        float radius =
-            center
-            -
-            1f;
-
-        for (
-            int y = 0;
-            y < size;
-            y++
-        )
-        {
-            for (
-                int x = 0;
-                x < size;
-                x++
-            )
-            {
-                float dx =
-                    x
-                    -
-                    center;
-
-                float dy =
-                    y
-                    -
-                    center;
-
-                float distance =
-                    Mathf.Sqrt(
-                        dx * dx
-                        +
-                        dy * dy
-                    );
-
-                // 1px 左右的柔和边缘，缩放到 20~24px 时不会显得锯齿太重。
-                float alpha =
-                    Mathf.Clamp01(
-                        radius
-                        -
-                        distance
-                        +
-                        1f
-                    );
-
-                tex.SetPixel(
-                    x,
-                    y,
-                    new Color(
-                        fill.r,
-                        fill.g,
-                        fill.b,
-                        fill.a
-                        *
-                        alpha
-                    )
-                );
-            }
-        }
-
-        tex.Apply();
-
-        return
-            tex;
-    }
-
     private static void EnsureStyles()
     {
         if (
@@ -4197,57 +4110,6 @@ public sealed class GuideOverlay : MonoBehaviour
             );
 
             _branchBorderTex.Apply();
-        }
-
-        if (
-            _stateMetCircleTex
-            ==
-            null
-        )
-        {
-            _stateMetCircleTex =
-                CreateStateCircleTexture(
-                    new Color(
-                        0.10f,
-                        0.55f,
-                        0.27f,
-                        1f
-                    )
-                );
-        }
-
-        if (
-            _stateUnmetCircleTex
-            ==
-            null
-        )
-        {
-            _stateUnmetCircleTex =
-                CreateStateCircleTexture(
-                    new Color(
-                        0.82f,
-                        0.13f,
-                        0.19f,
-                        1f
-                    )
-                );
-        }
-
-        if (
-            _stateUnknownCircleTex
-            ==
-            null
-        )
-        {
-            _stateUnknownCircleTex =
-                CreateStateCircleTexture(
-                    new Color(
-                        0.38f,
-                        0.43f,
-                        0.49f,
-                        1f
-                    )
-                );
         }
 
         if (
@@ -4540,30 +4402,6 @@ public sealed class GuideOverlay : MonoBehaviour
 
             _wrapButton
                 .active
-                .textColor =
-                    Color.white;
-        }
-
-        if (
-            _stateIconSymbolStyle
-            ==
-            null
-        )
-        {
-            _stateIconSymbolStyle =
-                new GUIStyle();
-
-            _stateIconSymbolStyle.fontSize =
-                11;
-
-            _stateIconSymbolStyle.fontStyle =
-                FontStyle.Bold;
-
-            _stateIconSymbolStyle.alignment =
-                TextAnchor.MiddleCenter;
-
-            _stateIconSymbolStyle
-                .normal
                 .textColor =
                     Color.white;
         }
