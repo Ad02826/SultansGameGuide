@@ -27,10 +27,16 @@ public sealed class GuideNode
     // “谁会把这个节点打开 / 创建出来”的通用反向索引。
     public List<GuideTriggerBranch> TriggerBranches { get; } = new();
 
-    // 本节点会打开哪些事件 / 仪式。
-    // 与 Links 分开保存，是因为这里还保留了分支自身的局部条件。
+    // 从配置中直接扫描到的原始出边；后面会聚合成关系分支。
     public List<GuideOutgoingTrigger> OutgoingTriggers { get; } = new();
 
+    // 统一关系图：
+    // IncomingRelations = 哪些事件 / 仪式会产生当前节点。
+    // OutgoingRelations = 当前节点会产生哪些事件 / 仪式。
+    public List<GuideRelationBranch> IncomingRelations { get; } = new();
+    public List<GuideRelationBranch> OutgoingRelations { get; } = new();
+
+    // 旧版平铺链接暂时保留给搜索/兼容逻辑；详情页不再直接使用。
     public List<GuideLink> Links { get; } = new();
     public string? ResultText { get; set; }
 }
@@ -54,8 +60,35 @@ public sealed class GuideOutgoingTrigger
     public string Label { get; init; } = "";
     public int TargetId { get; init; }
     public NodeKind TargetKind { get; init; }
+
+    // rite / event_on / event
+    public string RelationType { get; init; } = "";
+
     public string HumanCondition { get; init; } = "没有额外要求。";
     public string RawCondition { get; init; } = "";
+}
+
+public sealed class GuideRelationBranch
+{
+    // IncomingRelations 中是来源节点；
+    // OutgoingRelations 中是目标节点。
+    public int NodeId { get; init; }
+    public NodeKind NodeKind { get; init; }
+    public string NodeName { get; init; } = "";
+
+    // 同一个来源/目标可能存在多条 settlement / case / success 路径。
+    // 外层只显示一次节点名，展开后再列出路径。
+    public List<GuideRelationPath> Paths { get; } = new();
+}
+
+public sealed class GuideRelationPath
+{
+    public string Context { get; init; } = "";
+    public string Timing { get; init; } = "";
+    public string HumanCondition { get; init; } = "没有额外要求。";
+    public string RawCondition { get; init; } = "";
+    public string ActionText { get; init; } = "";
+    public string RelationType { get; init; } = "";
 }
 
 public sealed record GuideLink(

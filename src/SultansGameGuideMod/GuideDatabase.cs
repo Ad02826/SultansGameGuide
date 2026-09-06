@@ -100,8 +100,10 @@ public sealed class GuideDatabase
             NodeKind.AfterStory
         );
 
-        // 所有节点加载完成后，建立“谁会创建 / 开启我”的反向触发索引。
-        BuildTriggerBranches();
+        // 所有节点加载完成后，建立统一关系图：
+        // 1. 谁会创建 / 开启我；
+        // 2. 我会创建 / 开启谁。
+        BuildRelationBranches();
     }
 
     private void LoadCards()
@@ -2904,6 +2906,7 @@ public sealed class GuideDatabase
                         node,
                         nextContext,
                         NodeKind.Rite,
+                        "rite",
                         humanCondition,
                         rawCondition
                     );
@@ -2924,6 +2927,27 @@ public sealed class GuideDatabase
                         node,
                         nextContext,
                         NodeKind.Event,
+                        "event_on",
+                        humanCondition,
+                        rawCondition
+                    );
+
+                    continue;
+                }
+
+                // event 表示直接进入 / 跳转到另一个事件。
+                if (
+                    property.Name
+                    ==
+                    "event"
+                )
+                {
+                    AddOutgoingTriggerValues(
+                        property.Value,
+                        node,
+                        nextContext,
+                        NodeKind.Event,
+                        "event",
                         humanCondition,
                         rawCondition
                     );
@@ -2970,6 +2994,7 @@ public sealed class GuideDatabase
         GuideNode node,
         string label,
         NodeKind kind,
+        string relationType,
         string humanCondition,
         string rawCondition
     )
@@ -2993,6 +3018,8 @@ public sealed class GuideDatabase
                         id,
                     TargetKind =
                         kind,
+                    RelationType =
+                        relationType,
                     HumanCondition =
                         string.IsNullOrWhiteSpace(
                             humanCondition
@@ -3040,6 +3067,8 @@ public sealed class GuideDatabase
                                 itemId,
                             TargetKind =
                                 kind,
+                            RelationType =
+                                relationType,
                             HumanCondition =
                                 string.IsNullOrWhiteSpace(
                                     humanCondition
@@ -3057,7 +3086,7 @@ public sealed class GuideDatabase
         }
     }
 
-    private void BuildTriggerBranches()
+    private void BuildRelationBranches()
     {
         foreach (
             var node
@@ -3065,6 +3094,11 @@ public sealed class GuideDatabase
             Nodes.Values
         )
         {
+            node.IncomingRelations.Clear();
+            node.OutgoingRelations.Clear();
+
+            // 旧版详情页曾使用 TriggerBranches；
+            // 新版关系图不再依赖它。
             node.TriggerBranches.Clear();
         }
 
@@ -3094,13 +3128,51 @@ public sealed class GuideDatabase
                     continue;
                 }
 
-                // 关键语义：节点自己的结算再次 action.rite / event_on 自己，
-                // 表示“结算后续存 / 重新挂回 / 重新武装监听”，
-                // 不是“这个节点最初是怎么被触发出来的”。
-                //
-                // 例如《治理家业》自己的 settlement_prior 中大量存在
-                // action.rite = 5000001；它们属于治理家业内部结算后的续存，
-                // 不能反向显示成《治理家业》的触发来源。
+                // 当前节点 -> 目标节点
+                var outgoingBranch =
+                    source.OutgoingRelations.FirstOrDefault(
+                        x =>
+                            x.NodeId
+                            ==
+                            target.Id
+                            &&
+                            x.NodeKind
+                            ==
+                            target.Kind
+                    );
+
+                if (
+                    outgoingBranch
+                    ==
+                    null
+                )
+                {
+                    outgoingBranch =
+                        new GuideRelationBranch
+                        {
+                            NodeId =
+                                target.Id,
+                            NodeKind =
+                                target.Kind,
+                            NodeName =
+                                target.Name
+                        };
+
+                    source.OutgoingRelations.Add(
+                        outgoingBranch
+                    );
+                }
+
+                AddRelationPath(
+                    outgoingBranch,
+                    source,
+                    target,
+                    edge
+                );
+
+                // 来源节点 -> 当前节点
+                // A -> A 属于自身续存 / 自循环，只保留在“走向”中，
+                // 不能反向显示成 A 的外部触发来源。
                 if (
                     source.Id
                     ==
@@ -3114,83 +3186,46 @@ public sealed class GuideDatabase
                     continue;
                 }
 
+                var incomingBranch =
+                    target.IncomingRelations.FirstOrDefault(
+                        x =>
+                            x.NodeId
+                            ==
+                            source.Id
+                            &&
+                            x.NodeKind
+                            ==
+                            source.Kind
+                    );
+
                 if (
-                    target.Kind
+                    incomingBranch
                     ==
-                    NodeKind.Rite
+                    null
                 )
                 {
-                    target.TriggerBranches.Add(
-                        new GuideTriggerBranch
+                    incomingBranch =
+                        new GuideRelationBranch
                         {
-                            Name =
-                                BuildRiteTriggerBranchName(
-                                    source,
-                                    target,
-                                    edge
-                                ),
-                            SourceId =
+                            NodeId =
                                 source.Id,
-                            SourceKind =
+                            NodeKind =
                                 source.Kind,
-                            SourceName =
-                                source.Name,
-                            SourceContext =
-                                edge.Label,
-                            Timing =
-                                BuildSourceExecutionTiming(
-                                    source
-                                ),
-                            HumanCondition =
-                                edge.HumanCondition,
-                            RawCondition =
-                                edge.RawCondition,
-                            Effect =
-                                string.IsNullOrWhiteSpace(
-                                    edge.Label
-                                )
-                                    ?
-                                    $"满足后生成《{target.Name}》。"
-                                    :
-                                    $"{edge.Label}，满足后生成《{target.Name}》。"
-                        }
+                            NodeName =
+                                source.Name
+                        };
+
+                    target.IncomingRelations.Add(
+                        incomingBranch
                     );
                 }
-                else if (
-                    target.Kind
-                    ==
-                    NodeKind.Event
-                )
-                {
-                    target.TriggerBranches.Add(
-                        new GuideTriggerBranch
-                        {
-                            Name =
-                                BuildEventTriggerBranchName(
-                                    source,
-                                    edge
-                                ),
-                            SourceId =
-                                source.Id,
-                            SourceKind =
-                                source.Kind,
-                            SourceName =
-                                source.Name,
-                            SourceContext =
-                                edge.Label,
-                            Timing =
-                                BuildEventTimingDescription(
-                                    target
-                                ),
-                            HumanCondition =
-                                target.HumanCondition,
-                            RawCondition =
-                                target.RawCondition,
-                            Effect =
-                                $"由{DisplayNode(source)}开启此事件；开启后按本事件自己的检查阶段与条件触发。"
-                        }
-                    );
-                }
+
+                AddRelationPath(
+                    incomingBranch,
+                    source,
+                    target,
+                    edge
+                );
             }
         }
 
@@ -3200,136 +3235,120 @@ public sealed class GuideDatabase
             Nodes.Values
         )
         {
-            // 同一来源 / 同一分支在配置中可能重复写入，先去重。
-            var unique =
-                node.TriggerBranches
-                    .GroupBy(
-                        x =>
-                            (
-                                x.Name,
-                                x.SourceId,
-                                x.SourceContext,
-                                x.RawCondition
-                            )
-                    )
-                    .Select(
-                        x =>
-                            x.First()
-                    )
-                    .ToList();
-
-            node.TriggerBranches.Clear();
-            node.TriggerBranches.AddRange(
-                unique
+            SortRelationBranches(
+                node.IncomingRelations
             );
 
-            if (
-                node.Kind
-                ==
-                NodeKind.Event
-                &&
-                node.TriggerBranches.Count
-                ==
-                0
-            )
-            {
-                node.TriggerBranches.Add(
-                    new GuideTriggerBranch
-                    {
-                        Name =
-                            "事件检查",
-                        SourceId =
-                            node.Id,
-                        SourceKind =
-                            node.Kind,
-                        SourceName =
-                            node.Name,
-                        Timing =
-                            BuildEventTimingDescription(
-                                node
-                            ),
-                        HumanCondition =
-                            node.HumanCondition,
-                        RawCondition =
-                            node.RawCondition,
-                        Effect =
-                            $"条件满足后触发「{node.Name}」。"
-                    }
-                );
-            }
-            else if (
-                node.Kind
-                ==
-                NodeKind.Rite
-                &&
-                node.TriggerBranches.Count
-                ==
-                0
-            )
-            {
-                node.TriggerBranches.Add(
-                    new GuideTriggerBranch
-                    {
-                        Name =
-                            "系统 / 剧情直接开启",
-                        SourceId =
-                            0,
-                        SourceKind =
-                            null,
-                        SourceName =
-                            "",
-                        Timing =
-                            "没有从普通 event_on / rite action 中解析到明确上游。这个仪式可能由初始场景、脚本或特殊系统流程直接加入地图。",
-                        HumanCondition =
-                            string.IsNullOrWhiteSpace(
-                                node.HumanCondition
-                            )
-                                ?
-                                "当前配置没有可用于判断的普通上游条件。"
-                                :
-                                node.HumanCondition,
-                        RawCondition =
-                            node.RawCondition,
-                        Effect =
-                            $"满足对应系统流程后出现《{node.Name}》。",
-                        IsFallback =
-                            true
-                    }
-                );
-            }
-            else if (
-                node.Kind
-                ==
-                NodeKind.AfterStory
-                &&
-                node.TriggerBranches.Count
-                ==
-                0
-            )
-            {
-                node.TriggerBranches.Add(
-                    new GuideTriggerBranch
-                    {
-                        Name =
-                            "结局条件",
-                        SourceId =
-                            node.Id,
-                        SourceKind =
-                            node.Kind,
-                        SourceName =
-                            node.Name,
-                        Timing =
-                            "进入结局 / 后日谈判定阶段时检查。",
-                        HumanCondition =
-                            node.HumanCondition,
-                        RawCondition =
-                            node.RawCondition,
-                        Effect =
-                            $"条件满足后进入「{node.Name}」。"
-                    }
-                );
-            }
+            SortRelationBranches(
+                node.OutgoingRelations
+            );
         }
+    }
+
+    private void AddRelationPath(
+        GuideRelationBranch branch,
+        GuideNode source,
+        GuideNode target,
+        GuideOutgoingTrigger edge
+    )
+    {
+        string actionText =
+            edge.RelationType switch
+            {
+                "rite" =>
+                    $"生成《{target.Name}》。",
+
+                "event" =>
+                    $"进入事件「{target.Name}」。",
+
+                _ =>
+                    $"开启事件「{target.Name}」。"
+            };
+
+        if (
+            !string.IsNullOrWhiteSpace(
+                edge.Label
+            )
+        )
+        {
+            actionText =
+                $"{edge.Label}：{actionText}";
+        }
+
+        var path =
+            new GuideRelationPath
+            {
+                Context =
+                    edge.Label,
+                Timing =
+                    BuildSourceExecutionTiming(
+                        source
+                    ),
+                HumanCondition =
+                    edge.HumanCondition,
+                RawCondition =
+                    edge.RawCondition,
+                ActionText =
+                    actionText,
+                RelationType =
+                    edge.RelationType
+            };
+
+        bool exists =
+            branch.Paths.Any(
+                x =>
+                    x.Context
+                    ==
+                    path.Context
+                    &&
+                    x.RawCondition
+                    ==
+                    path.RawCondition
+                    &&
+                    x.RelationType
+                    ==
+                    path.RelationType
+                    &&
+                    x.ActionText
+                    ==
+                    path.ActionText
+            );
+
+        if (
+            !exists
+        )
+        {
+            branch.Paths.Add(
+                path
+            );
+        }
+    }
+
+    private static void SortRelationBranches(
+        List<GuideRelationBranch> branches
+    )
+    {
+        var ordered =
+            branches
+                .OrderBy(
+                    x =>
+                        x.NodeKind
+                )
+                .ThenBy(
+                    x =>
+                        x.NodeName,
+                    StringComparer.Ordinal
+                )
+                .ThenBy(
+                    x =>
+                        x.NodeId
+                )
+                .ToList();
+
+        branches.Clear();
+        branches.AddRange(
+            ordered
+        );
     }
 
     private string BuildEventTimingDescription(

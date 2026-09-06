@@ -79,7 +79,15 @@ public sealed class GuideOverlay : MonoBehaviour
 
     private static readonly Stack<int> _history = new();
 
-    // “触发机制”分支默认折叠；点击分支名后展开。
+    // 关系图分支默认折叠。
+    private static readonly HashSet<string> _expandedIncomingRelations =
+        new();
+
+    private static readonly HashSet<string> _expandedOutgoingRelations =
+        new();
+
+    // 旧版触发机制绘制 helper 仍保留在文件中用于兼容，
+    // 新版详情页不再调用。
     private static readonly HashSet<string> _expandedTriggerBranches =
         new();
 
@@ -1115,7 +1123,7 @@ public sealed class GuideOverlay : MonoBehaviour
                 330,
                 22
             ),
-            "v0.5.0 · 状态符号同基线根治",
+            "v0.5.1 · 剧情关系图重构",
             _small
         );
 
@@ -1800,7 +1808,11 @@ public sealed class GuideOverlay : MonoBehaviour
                 _selectedId
             );
 
-        if (node == null)
+        if (
+            node
+            ==
+            null
+        )
         {
             GUI.Label(
                 new Rect(
@@ -1814,22 +1826,6 @@ public sealed class GuideOverlay : MonoBehaviour
             );
 
             return;
-        }
-
-        float outcomeHeight =
-            0f;
-
-        if (
-            !string.IsNullOrWhiteSpace(
-                node.HumanOutcome
-            )
-        )
-        {
-            outcomeHeight =
-                EstimateTextHeight(
-                    node.HumanOutcome,
-                    52
-                );
         }
 
         string result =
@@ -1865,45 +1861,42 @@ public sealed class GuideOverlay : MonoBehaviour
                 );
         }
 
-        int linkCount =
-            node.Links.Count;
+        float incomingHeight =
+            EstimateRelationSectionHeight(
+                node,
+                node.IncomingRelations,
+                true
+            );
 
-        float triggerHeight =
-            EstimateTriggerMechanismHeight(
-                node
+        float outgoingHeight =
+            EstimateRelationSectionHeight(
+                node,
+                node.OutgoingRelations,
+                false
             );
 
         float contentHeight =
             62f
             +
-            triggerHeight
+            incomingHeight
             +
-            (
-                outcomeHeight > 0
-                    ?
-                    27f + outcomeHeight + 16f
-                    :
-                    0f
-            )
+            12f
+            +
+            outgoingHeight
             +
             (
                 resultHeight > 0
                     ?
-                    27f + resultHeight + 16f
+                    27f
+                    +
+                    resultHeight
+                    +
+                    18f
                     :
                     0f
             )
             +
-            30f
-            +
-            Math.Max(
-                1,
-                linkCount
-            )
-            *
-            50f
-            +
-            60f;
+            70f;
 
         float viewWidth =
             Math.Max(
@@ -1990,288 +1983,50 @@ public sealed class GuideOverlay : MonoBehaviour
         cy +=
             50f;
 
-        // =========================
-        // 触发机制
-        // =========================
-        GUI.Label(
-            new Rect(
-                localX,
-                cy,
-                localW,
-                24
-            ),
+        DrawRelationSection(
+            node,
+            node.IncomingRelations,
+            true,
             "触发机制",
-            _triggerTitleStyle
+            localX,
+            ref cy,
+            localW
         );
 
         cy +=
-            32f;
+            12f;
 
-        // 用一个完整的大框把当前节点的所有触发分支包起来。
-        // 分支仍然保持默认折叠；展开后的条件详情继续显示在框内。
-        float triggerGroupHeight =
-            EstimateTriggerBranchGroupHeight(
-                node
-            );
-
-        float triggerGroupY =
-            cy;
-
-        DrawTriggerGroupFrame(
-            new Rect(
-                localX,
-                triggerGroupY,
-                localW,
-                triggerGroupHeight
-            )
-        );
-
-        float triggerInnerX =
-            localX + 10f;
-
-        float triggerInnerW =
-            localW - 20f;
-
-        cy +=
-            10f;
-
-        if (
-            node.TriggerBranches.Count
+        DrawRelationSection(
+            node,
+            node.OutgoingRelations,
+            false,
+            node.Kind
             ==
-            0
-        )
-        {
-            GUI.Label(
-                new Rect(
-                    triggerInnerX,
-                    cy,
-                    triggerInnerW,
-                    44
-                ),
-                "没有解析到可展示的触发分支。",
-                _body
-            );
-
-            cy +=
-                44f;
-        }
-        else
-        {
-            for (
-                int i = 0;
-                i
-                <
-                node.TriggerBranches.Count;
-                i++
-            )
-            {
-                var branch =
-                    node.TriggerBranches[i];
-
-                string branchKey =
-                    BuildTriggerBranchKey(
-                        node,
-                        branch,
-                        i
-                    );
-
-                bool expanded =
-                    _expandedTriggerBranches.Contains(
-                        branchKey
-                    );
-
-                var state =
-                    EvaluateTriggerBranch(
-                        branch,
-                        out var rows
-                    );
-
-                float branchStartY =
-                    cy;
-
-                float branchHeight =
-                    EstimateTriggerBranchContainerHeight(
-                        branch,
-                        rows,
-                        expanded
-                    );
-
-                DrawTriggerBranchFrame(
-                    new Rect(
-                        triggerInnerX,
-                        branchStartY,
-                        triggerInnerW,
-                        branchHeight
-                    )
-                );
-
-                float headerX =
-                    triggerInnerX + 6f;
-
-                float headerY =
-                    branchStartY + 6f;
-
-                float headerW =
-                    triggerInnerW - 12f;
-
-                var buttonRect =
-                    new Rect(
-                        headerX,
-                        headerY,
-                        headerW,
-                        36f
-                    );
-
-                // 用空文字按钮只负责点击/悬停。
-                // 箭头、状态图标、分支名分开绘制，彻底避免文字与图标重叠。
-                if (
-                    GUI.Button(
-                        buttonRect,
-                        "",
-                        _wrapButton
-                    )
-                )
-                {
-                    if (
-                        expanded
-                    )
-                    {
-                        _expandedTriggerBranches.Remove(
-                            branchKey
-                        );
-                    }
-                    else
-                    {
-                        _expandedTriggerBranches.Add(
-                            branchKey
-                        );
-                    }
-                }
-
-                string arrow =
-                    expanded
+            NodeKind.Rite
+                ?
+                "仪式走向"
+                :
+                (
+                    node.Kind
+                    ==
+                    NodeKind.Event
                         ?
-                        "▼"
+                        "事件走向"
                         :
-                        "▶";
-
-                string branchHeaderText =
-                    arrow
-                    +
-                    "  "
-                    +
-                    BuildStateRichText(
-                        state
-                    )
-                    +
-                    "  "
-                    +
-                    EscapeRichTextDisplay(
-                        branch.Name
-                    );
-
-                GUI.Label(
-                    buttonRect,
-                    branchHeaderText,
-                    _branchHeaderLineStyle
-                );
-
-                cy =
-                    branchStartY
-                    +
-                    48f;
-
-                if (
-                    expanded
-                )
-                {
-                    DrawExpandedTriggerBranch(
-                        branch,
-                        rows,
-                        triggerInnerX + 12f,
-                        ref cy,
-                        triggerInnerW - 24f
-                    );
-                }
-
-                cy =
-                    branchStartY
-                    +
-                    branchHeight
-                    +
-                    8f;
-            }
-        }
-
-        // 对齐到大框底部，避免展开/折叠后后续区域位置漂移。
-        cy =
-            triggerGroupY
-            +
-            triggerGroupHeight
-            +
-            10f;
-
-        // =========================
-        // 节点走向
-        // =========================
-        if (
-            outcomeHeight > 0
-        )
-        {
-            GUI.Label(
-                new Rect(
-                    localX,
-                    cy,
-                    localW,
-                    24
+                        "后续走向"
                 ),
-                node.Kind
-                ==
-                NodeKind.Rite
-                    ?
-                    "仪式走向"
-                    :
-                    "事件走向",
-                _subTitle
-            );
+            localX,
+            ref cy,
+            localW
+        );
 
-            cy +=
-                27f;
-
-            GUI.Box(
-                new Rect(
-                    localX,
-                    cy,
-                    localW,
-                    outcomeHeight
-                ),
-                ""
-            );
-
-            GUI.Label(
-                new Rect(
-                    localX + 9,
-                    cy + 7,
-                    localW - 18,
-                    outcomeHeight - 14
-                ),
-                node.HumanOutcome,
-                _body
-            );
-
-            cy +=
-                outcomeHeight
-                +
-                14f;
-        }
-
-        // =========================
-        // 结局说明
-        // =========================
         if (
             resultHeight > 0
         )
         {
+            cy +=
+                14f;
+
             GUI.Label(
                 new Rect(
                     localX,
@@ -2313,86 +2068,604 @@ public sealed class GuideOverlay : MonoBehaviour
                 14f;
         }
 
-        // =========================
-        // 后续分支
-        // =========================
+        GUI.EndScrollView();
+    }
+
+    private static void DrawRelationSection(
+        GuideNode currentNode,
+        List<GuideRelationBranch> branches,
+        bool incoming,
+        string title,
+        float x,
+        ref float cy,
+        float w
+    )
+    {
         GUI.Label(
             new Rect(
-                localX,
+                x,
                 cy,
-                localW,
-                24
+                w,
+                24f
             ),
-            node.Links.Count > 0
-                ?
-                "可以继续看："
-                :
-                "后续",
-            _subTitle
+            title,
+            _triggerTitleStyle
         );
 
         cy +=
-            27f;
+            32f;
+
+        float groupHeight =
+            EstimateRelationGroupHeight(
+                currentNode,
+                branches,
+                incoming
+            );
+
+        float groupY =
+            cy;
+
+        DrawTriggerGroupFrame(
+            new Rect(
+                x,
+                groupY,
+                w,
+                groupHeight
+            )
+        );
+
+        float innerX =
+            x + 10f;
+
+        float innerW =
+            w - 20f;
+
+        cy +=
+            10f;
 
         if (
-            node.Links.Count == 0
+            branches.Count
+            ==
+            0
         )
         {
             GUI.Label(
                 new Rect(
-                    localX,
+                    innerX,
                     cy,
-                    localW,
-                    46
+                    innerW,
+                    42f
                 ),
-                node.Kind
-                ==
-                NodeKind.AfterStory
+                incoming
                     ?
-                    "这里已经是结局 / 后日谈。"
+                    "未找到明确的事件 / 仪式上游来源。"
                     :
-                    "没有解析到直接后续剧情。",
+                    "未找到明确的后续事件 / 仪式。",
                 _body
             );
+
+            cy +=
+                42f;
         }
         else
         {
-            foreach (
-                var link
-                in
-                node.Links
+            for (
+                int i = 0;
+                i < branches.Count;
+                i++
             )
             {
-                string label =
-                    _db.DescribeTransition(
-                        link
+                var branch =
+                    branches[i];
+
+                string key =
+                    BuildRelationBranchKey(
+                        currentNode,
+                        branch,
+                        incoming
+                    );
+
+                var expandedSet =
+                    incoming
+                        ?
+                        _expandedIncomingRelations
+                        :
+                        _expandedOutgoingRelations;
+
+                bool expanded =
+                    expandedSet.Contains(
+                        key
+                    );
+
+                float branchStartY =
+                    cy;
+
+                float branchHeight =
+                    EstimateRelationBranchHeight(
+                        currentNode,
+                        branch,
+                        incoming,
+                        expanded
+                    );
+
+                DrawTriggerBranchFrame(
+                    new Rect(
+                        innerX,
+                        branchStartY,
+                        innerW,
+                        branchHeight
+                    )
+                );
+
+                var buttonRect =
+                    new Rect(
+                        innerX + 6f,
+                        branchStartY + 6f,
+                        innerW - 12f,
+                        36f
                     );
 
                 if (
                     GUI.Button(
-                        new Rect(
-                            localX,
-                            cy,
-                            localW,
-                            44
-                        ),
-                        label,
+                        buttonRect,
+                        "",
                         _wrapButton
                     )
                 )
                 {
-                    NavigateTo(
-                        link.TargetId,
-                        true
+                    if (
+                        expanded
+                    )
+                    {
+                        expandedSet.Remove(
+                            key
+                        );
+                    }
+                    else
+                    {
+                        expandedSet.Add(
+                            key
+                        );
+                    }
+                }
+
+                string arrow =
+                    expanded
+                        ?
+                        "▼"
+                        :
+                        "▶";
+
+                string header =
+                    arrow
+                    +
+                    "  "
+                    +
+                    RelationKindName(
+                        branch.NodeKind
+                    )
+                    +
+                    " · "
+                    +
+                    EscapeRichTextDisplay(
+                        branch.NodeName
+                    );
+
+                GUI.Label(
+                    buttonRect,
+                    header,
+                    _branchHeaderLineStyle
+                );
+
+                cy =
+                    branchStartY
+                    +
+                    48f;
+
+                if (
+                    expanded
+                )
+                {
+                    DrawExpandedRelationBranch(
+                        currentNode,
+                        branch,
+                        incoming,
+                        innerX + 12f,
+                        ref cy,
+                        innerW - 24f
                     );
                 }
 
-                cy +=
-                    48f;
+                cy =
+                    branchStartY
+                    +
+                    branchHeight
+                    +
+                    8f;
             }
         }
 
-        GUI.EndScrollView();
+        cy =
+            groupY
+            +
+            groupHeight;
+    }
+
+    private static float EstimateRelationSectionHeight(
+        GuideNode currentNode,
+        List<GuideRelationBranch> branches,
+        bool incoming
+    )
+    {
+        return
+            32f
+            +
+            EstimateRelationGroupHeight(
+                currentNode,
+                branches,
+                incoming
+            );
+    }
+
+    private static float EstimateRelationGroupHeight(
+        GuideNode currentNode,
+        List<GuideRelationBranch> branches,
+        bool incoming
+    )
+    {
+        float height =
+            20f;
+
+        if (
+            branches.Count
+            ==
+            0
+        )
+        {
+            return
+                height
+                +
+                42f;
+        }
+
+        foreach (
+            var branch
+            in
+            branches
+        )
+        {
+            string key =
+                BuildRelationBranchKey(
+                    currentNode,
+                    branch,
+                    incoming
+                );
+
+            bool expanded =
+                (
+                    incoming
+                        ?
+                        _expandedIncomingRelations
+                        :
+                        _expandedOutgoingRelations
+                )
+                    .Contains(
+                        key
+                    );
+
+            height +=
+                EstimateRelationBranchHeight(
+                    currentNode,
+                    branch,
+                    incoming,
+                    expanded
+                )
+                +
+                8f;
+        }
+
+        return
+            height;
+    }
+
+    private static float EstimateRelationBranchHeight(
+        GuideNode currentNode,
+        GuideRelationBranch branch,
+        bool incoming,
+        bool expanded
+    )
+    {
+        float height =
+            54f;
+
+        if (
+            !expanded
+        )
+        {
+            return
+                height;
+        }
+
+        for (
+            int i = 0;
+            i < branch.Paths.Count;
+            i++
+        )
+        {
+            string pathText =
+                BuildRelationPathText(
+                    currentNode,
+                    branch,
+                    branch.Paths[i],
+                    incoming,
+                    branch.Paths.Count,
+                    i
+                );
+
+            height +=
+                EstimateTextHeight(
+                    pathText,
+                    54f
+                )
+                +
+                10f;
+        }
+
+        // “可以继续看”已经合并到关系分支里：
+        // 展开后直接提供查看来源 / 查看后续按钮。
+        height +=
+            38f;
+
+        return
+            height;
+    }
+
+    private static void DrawExpandedRelationBranch(
+        GuideNode currentNode,
+        GuideRelationBranch branch,
+        bool incoming,
+        float x,
+        ref float cy,
+        float w
+    )
+    {
+        for (
+            int i = 0;
+            i < branch.Paths.Count;
+            i++
+        )
+        {
+            string pathText =
+                BuildRelationPathText(
+                    currentNode,
+                    branch,
+                    branch.Paths[i],
+                    incoming,
+                    branch.Paths.Count,
+                    i
+                );
+
+            float textHeight =
+                EstimateTextHeight(
+                    pathText,
+                    54f
+                );
+
+            GUI.Label(
+                new Rect(
+                    x,
+                    cy,
+                    w,
+                    textHeight
+                ),
+                pathText,
+                _body
+            );
+
+            cy +=
+                textHeight
+                +
+                10f;
+        }
+
+        string buttonText =
+            incoming
+                ?
+                "查看来源 →"
+                :
+                "查看后续 →";
+
+        if (
+            GUI.Button(
+                new Rect(
+                    x,
+                    cy,
+                    112f,
+                    28f
+                ),
+                buttonText
+            )
+        )
+        {
+            NavigateTo(
+                branch.NodeId,
+                true
+            );
+        }
+
+        cy +=
+            34f;
+    }
+
+    private static string BuildRelationPathText(
+        GuideNode currentNode,
+        GuideRelationBranch branch,
+        GuideRelationPath path,
+        bool incoming,
+        int pathCount,
+        int index
+    )
+    {
+        var lines =
+            new List<string>();
+
+        if (
+            pathCount > 1
+        )
+        {
+            lines.Add(
+                $"路径 {index + 1}"
+            );
+        }
+
+        if (
+            incoming
+            &&
+            !string.IsNullOrWhiteSpace(
+                path.Timing
+            )
+        )
+        {
+            lines.Add(
+                path.Timing
+            );
+        }
+
+        if (
+            !string.IsNullOrWhiteSpace(
+                path.Context
+            )
+        )
+        {
+            lines.Add(
+                $"分支：{path.Context}"
+            );
+        }
+
+        if (
+            !IsNoExtraConditionDisplay(
+                path.HumanCondition
+            )
+        )
+        {
+            lines.Add(
+                $"条件：{path.HumanCondition}"
+            );
+        }
+
+        if (
+            !string.IsNullOrWhiteSpace(
+                path.ActionText
+            )
+        )
+        {
+            lines.Add(
+                path.ActionText
+            );
+        }
+
+        if (
+            lines.Count
+            ==
+            0
+        )
+        {
+            lines.Add(
+                incoming
+                    ?
+                    $"{RelationKindName(branch.NodeKind)}「{branch.NodeName}」会产生当前节点。"
+                    :
+                    $"当前节点会产生{RelationKindName(branch.NodeKind)}「{branch.NodeName}」。"
+            );
+        }
+
+        return
+            string.Join(
+                "\n",
+                lines
+            );
+    }
+
+    private static bool IsNoExtraConditionDisplay(
+        string? text
+    )
+    {
+        if (
+            string.IsNullOrWhiteSpace(
+                text
+            )
+        )
+        {
+            return
+                true;
+        }
+
+        string normalized =
+            text
+                .Trim()
+                .TrimEnd(
+                    '。',
+                    '.'
+                );
+
+        return
+            normalized
+            ==
+            "没有额外要求"
+            ||
+            normalized
+            ==
+            "没有额外条件";
+    }
+
+    private static string BuildRelationBranchKey(
+        GuideNode currentNode,
+        GuideRelationBranch branch,
+        bool incoming
+    )
+    {
+        return
+            (
+                incoming
+                    ?
+                    "IN"
+                    :
+                    "OUT"
+            )
+            +
+            ":"
+            +
+            currentNode.Id
+            +
+            ":"
+            +
+            currentNode.Kind
+            +
+            ":"
+            +
+            branch.NodeId
+            +
+            ":"
+            +
+            branch.NodeKind;
+    }
+
+    private static string RelationKindName(
+        NodeKind kind
+    )
+    {
+        return
+            kind switch
+            {
+                NodeKind.Rite =>
+                    "仪式",
+
+                NodeKind.Event =>
+                    "事件",
+
+                _ =>
+                    "后日谈"
+            };
     }
 
     private static void DrawTriggerGroupFrame(
