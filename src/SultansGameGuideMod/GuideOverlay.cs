@@ -536,90 +536,64 @@ public sealed class GuideOverlay : MonoBehaviour
         bool force
     )
     {
-        if (
-            _db == null
-            ||
-            !_loaded
-        )
+        if (_db == null || !_loaded)
         {
             return;
         }
 
-        DateTime now =
-            DateTime.UtcNow;
+        DateTime now = DateTime.UtcNow;
 
-        if (
-            !force
-            &&
-            now
-            <
-            _nextRuntimeRefreshUtc
-        )
+        if (!force && now < _nextRuntimeRefreshUtc)
         {
             return;
         }
 
-        _nextRuntimeRefreshUtc =
-            now.AddMilliseconds(
-                700
-            );
+        _nextRuntimeRefreshUtc = now.AddMilliseconds(700);
 
         try
         {
-            var gc =
-                GameController.Inst;
+            var gc = GameController.Inst;
 
-            if (
-                gc == null
-                ||
-                gc.EventTrigger == null
-            )
+            if (gc == null)
             {
                 _runtimeNodes.Clear();
                 _activeEventIds.Clear();
-
-                _runtimeStatus =
-                    "当前不在可读取的游戏局内。";
-
+                _runtimeStatus = "当前不在可读取的游戏局内。";
                 return;
             }
 
-            var activeEvents =
-                gc.EventTrigger.GetActiveEvents();
+            // GetActiveEvents() 是大量后台监听事件，并不等于玩家正在进行的剧情。
+            // GetViewRites() 对应当前地图/桌面真正显示出来的仪式。
+            var viewRites = gc.GetViewRites();
+            var currentRiteIds = new List<int>();
 
-            var newActiveIds =
-                new List<int>();
-
-            if (activeEvents != null)
+            if (viewRites != null)
             {
-                foreach (
-                    var evt
-                    in
-                    activeEvents
-                )
+                foreach (var riteController in viewRites)
                 {
                     try
                     {
-                        var idObject =
-                            evt.id;
+                        if (
+                            riteController == null
+                            ||
+                            riteController.riteConfig == null
+                        )
+                        {
+                            continue;
+                        }
+
+                        var idObject = riteController.riteConfig.id;
 
                         if (idObject == null)
                         {
                             continue;
                         }
 
-                        int eventId =
-                            Convert.ToInt32(
-                                idObject.ToString()
-                            );
+                        int riteId = Convert.ToInt32(idObject.ToString());
 
-                        if (
-                            eventId > 0
-                        )
+                        if (riteId > 0)
                         {
-                            newActiveIds.Add(
-                                eventId
-                            );
+                            currentRiteIds.Add(riteId);
                         }
                     }
                     catch
@@ -628,20 +602,10 @@ public sealed class GuideOverlay : MonoBehaviour
                 }
             }
 
-            newActiveIds =
-                newActiveIds
-                    .Distinct()
-                    .ToList();
+            currentRiteIds = currentRiteIds.Distinct().ToList();
 
             string newSignature =
-                string.Join(
-                    ",",
-                    newActiveIds
-                        .OrderBy(
-                            x =>
-                                x
-                        )
-                );
+                string.Join(",", currentRiteIds.OrderBy(x => x));
 
             bool changed =
                 !string.Equals(
@@ -650,35 +614,19 @@ public sealed class GuideOverlay : MonoBehaviour
                     StringComparison.Ordinal
                 );
 
-            _activeSignature =
-                newSignature;
-
+            _activeSignature = newSignature;
             _activeEventIds.Clear();
 
-            foreach (
-                int eventId
-                in
-                newActiveIds
-            )
+            foreach (int riteId in currentRiteIds)
             {
-                _activeEventIds.Add(
-                    eventId
-                );
+                _activeEventIds.Add(riteId);
             }
 
             _runtimeNodes.Clear();
 
-            // 第一层：游戏当前真正处于活跃状态的事件。
-            foreach (
-                int eventId
-                in
-                newActiveIds
-            )
+            foreach (int riteId in currentRiteIds)
             {
-                var node =
-                    _db.Get(
-                        eventId
-                    );
+                var node = _db.Get(riteId);
 
                 if (node == null)
                 {
@@ -688,121 +636,108 @@ public sealed class GuideOverlay : MonoBehaviour
                 _runtimeNodes.Add(
                     new RuntimeNodeItem
                     {
-                        Node =
-                            node,
-
-                        Prefix =
-                            "● 正在进行",
-
-                        IsActive =
-                            true
+                        Node = node,
+                        Prefix = "● 当前可处理",
+                        IsActive = true
                     }
                 );
             }
 
-            // 第二层：从当前事件能够直接走到的下一步。
-            var seen =
-                new HashSet<int>(
-                    newActiveIds
+            var seen = new HashSet<int>(currentRiteIds);
+            var seenNames =
+                new HashSet<string>(
+                    StringComparer.Ordinal
                 );
 
-            foreach (
-                int eventId
-                in
-                newActiveIds
-            )
+            foreach (var item in _runtimeNodes)
             {
-                var current =
-                    _db.Get(
-                        eventId
-                    );
+                seenNames.Add(
+                    item.Node.Kind
+                    +
+                    ":"
+                    +
+                    item.Node.Name
+                );
+            }
+
+            foreach (int riteId in currentRiteIds)
+            {
+                var current = _db.Get(riteId);
 
                 if (current == null)
                 {
                     continue;
                 }
 
-                foreach (
-                    var link
-                    in
-                    current.Links
-                )
+                foreach (var link in current.Links)
                 {
                     if (
-                        seen.Contains(
-                            link.TargetId
-                        )
+                        link == null
+                        ||
+                        seen.Contains(link.TargetId)
                     )
                     {
                         continue;
                     }
 
-                    var target =
-                        _db.Get(
-                            link.TargetId
-                        );
+                    var target = _db.Get(link.TargetId);
 
                     if (target == null)
                     {
                         continue;
                     }
 
-                    seen.Add(
-                        link.TargetId
-                    );
+                    string nameKey =
+                        target.Kind
+                        +
+                        ":"
+                        +
+                        target.Name;
+
+                    if (seenNames.Contains(nameKey))
+                    {
+                        continue;
+                    }
+
+                    seen.Add(link.TargetId);
+                    seenNames.Add(nameKey);
 
                     _runtimeNodes.Add(
                         new RuntimeNodeItem
                         {
-                            Node =
-                                target,
-
-                            Prefix =
-                                "→ 可能后续",
-
-                            IsActive =
-                                false
+                            Node = target,
+                            Prefix = "→ 直接后续",
+                            IsActive = false
                         }
                     );
                 }
             }
 
             _runtimeStatus =
-                newActiveIds.Count > 0
+                currentRiteIds.Count > 0
                     ?
-                    $"当前有 {newActiveIds.Count} 个活跃事件；列表会自动刷新。"
+                    $"当前有 {currentRiteIds.Count} 个地图/桌面仪式；这里只显示它们和直接后续。"
                     :
-                    "当前没有检测到活跃事件。";
+                    "当前没有检测到地图/桌面上的可见仪式。";
 
             if (
                 _autoFollow
                 &&
-                newActiveIds.Count > 0
+                currentRiteIds.Count > 0
                 &&
                 (
                     changed
                     ||
-                    !_activeEventIds.Contains(
-                        _selectedId
-                    )
+                    !_activeEventIds.Contains(_selectedId)
                 )
             )
             {
-                int first =
-                    newActiveIds[0];
+                int first = currentRiteIds[0];
 
-                if (
-                    _db.Get(first)
-                    !=
-                    null
-                )
+                if (_db.Get(first) != null)
                 {
-                    _selectedId =
-                        first;
-
-                    _detailScroll =
-                        Vector2.zero;
-
+                    _selectedId = first;
+                    _detailScroll = Vector2.zero;
                     _history.Clear();
                 }
             }
@@ -810,7 +745,7 @@ public sealed class GuideOverlay : MonoBehaviour
         catch (Exception ex)
         {
             _runtimeStatus =
-                "读取当前剧情失败，已保留手动搜索模式。";
+                "读取当前地图/桌面仪式失败，已保留手动搜索模式。";
 
             Log.LogWarning(
                 "RefreshRuntimeContext failed: "
@@ -819,10 +754,6 @@ public sealed class GuideOverlay : MonoBehaviour
             );
         }
     }
-
-    // ============================================================
-    // UI
-    // ============================================================
 
     private static void DrawPanel()
     {
@@ -875,7 +806,7 @@ public sealed class GuideOverlay : MonoBehaviour
                 330,
                 22
             ),
-            "v0.4.74 · 拖动隔离",
+            "v0.4.75 · 当前仪式+语义审计",
             _small
         );
 

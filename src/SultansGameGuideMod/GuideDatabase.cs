@@ -16,6 +16,10 @@ public sealed class GuideDatabase
     public readonly Dictionary<string, string> ConditionHints =
         new(StringComparer.OrdinalIgnoreCase);
 
+    // 同一个机器键出现不同策划注释时，不再使用“第一条注释”做全局翻译。
+    private readonly HashSet<string> AmbiguousConditionHints =
+        new(StringComparer.OrdinalIgnoreCase);
+
     public readonly Dictionary<int, string> RiteNames = new();
     public readonly Dictionary<int, string> EventNames = new();
 
@@ -53,6 +57,7 @@ public sealed class GuideDatabase
 
         CounterHints.Clear();
         ConditionHints.Clear();
+        AmbiguousConditionHints.Clear();
 
         RiteNames.Clear();
         EventNames.Clear();
@@ -248,15 +253,26 @@ public sealed class GuideDatabase
                                 .Value;
 
                         if (
-                            !ConditionHints.ContainsKey(
-                                machineKey
+                            ConditionHints.TryGetValue(
+                                machineKey,
+                                out var existingHint
                             )
                         )
                         {
-                            ConditionHints[
-                                machineKey
-                            ] =
-                                comment;
+                            if (
+                                !string.Equals(
+                                    CleanupComment(existingHint),
+                                    CleanupComment(comment),
+                                    StringComparison.Ordinal
+                                )
+                            )
+                            {
+                                AmbiguousConditionHints.Add(machineKey);
+                            }
+                        }
+                        else
+                        {
+                            ConditionHints[machineKey] = comment;
                         }
                     }
 
@@ -1184,6 +1200,10 @@ public sealed class GuideDatabase
             node.Children
                 .Select(
                     child =>
+                        !AmbiguousConditionHints.Contains(
+                            child.Key.TrimStart('!')
+                        )
+                        &&
                         ConditionHints.TryGetValue(
                             child.Key.TrimStart('!'),
                             out var hint
@@ -1285,44 +1305,119 @@ public sealed class GuideDatabase
                 key[1..];
         }
 
+        // 游戏中还有 "rite":5002002 / "!rite":5002002 这种写法。
+        // 仪式 ID 在 value 里，不能拿通用的 rite 字段去匹配别处注释。
+        if (
+            key.Equals(
+                "rite",
+                StringComparison.OrdinalIgnoreCase
+            )
+            &&
+            int.TryParse(
+                value,
+                out int directRiteId
+            )
+        )
+        {
+            string directRiteName =
+                RiteNames.TryGetValue(
+                    directRiteId,
+                    out var knownRiteName
+                )
+                    ?
+                    $"《{knownRiteName}》"
+                    :
+                    "相关仪式";
+
+            return negated
+                ?
+                $"当前没有正在进行的{directRiteName}"
+                :
+                $"{directRiteName}当前正在进行";
+        }
+
+        // hand_have 原版完全没有解析，先做玩家可理解的基础翻译。
+        if (
+            key.StartsWith(
+                "hand_have."
+            )
+        )
+        {
+            string expression = key[10..];
+            string subject = expression.Split('.')[0];
+            string subjectName =
+                int.TryParse(subject, out int handId)
+                    ?
+                    CardName(handId)
+                    :
+                    $"「{subject}」";
+
+            return negated
+                ?
+                $"手牌中没有{subjectName}"
+                :
+                $"{subjectName}在手牌中";
+        }
+
         if (
             key.StartsWith(
                 "have."
             )
         )
         {
-            string token =
-                key[5..]
-                    .Split('.')[0];
+            string expression = key[5..];
+            string[] parts = expression.Split('.');
+            string subject = parts[0];
+
+            string subjectName =
+                int.TryParse(subject, out int id)
+                    ?
+                    CardName(id)
+                    :
+                    $"「{subject}」";
+
+            if (parts.Length > 1)
+            {
+                string tag = string.Join(".", parts.Skip(1));
+
+                return negated
+                    ?
+                    $"{subjectName}不能满足「{tag}」这一状态要求"
+                    :
+                    $"当前有{subjectName}，并具有「{tag}」状态";
+            }
 
             if (
                 int.TryParse(
-                    token,
-                    out int id
+                    subject,
+                    out int numericId
                 )
             )
             {
-                string name =
-                    CardName(id);
-
                 bool character =
-                    IsCharacter(id);
+                    IsCharacter(numericId);
 
                 if (negated)
                 {
                     return character
                         ?
-                        $"当前没有{name}"
+                        $"当前没有{subjectName}"
                         :
-                        $"还没有{name}";
+                        $"还没有{subjectName}";
                 }
 
                 return character
                     ?
-                    $"{name}仍在"
+                    $"{subjectName}仍在"
                     :
-                    $"已经拥有{name}";
+                    $"已经拥有{subjectName}";
             }
+
+            return negated
+                ?
+                $"当前没有{subjectName}"
+                :
+                $"当前有{subjectName}";
         }
 
         if (
@@ -1331,31 +1426,41 @@ public sealed class GuideDatabase
             )
         )
         {
-            string token =
-                key[11..]
-                    .Split('.')[0];
+            string expression = key[11..];
+            string[] parts = expression.Split('.');
+            string subject = parts[0];
 
-            if (
-                int.TryParse(
-                    token,
-                    out int id
-                )
-            )
-            {
-                string name =
-                    CardName(id);
-
-                if (negated)
-                {
-                    return $"{name}当前不能使用";
-                }
-
-                return IsCharacter(id)
+            string subjectName =
+                int.TryParse(subject, out int id)
                     ?
-                    $"{name}当前空闲，可以出面"
+                    CardName(id)
                     :
-                    $"{name}当前没有被占用，可以使用";
+                    $"「{subject}」";
+
+            if (parts.Length > 1)
+            {
+                string tag = string.Join(".", parts.Skip(1));
+
+                return negated
+                    ?
+                    $"{subjectName}当前不能以「{tag}」状态使用"
+                    :
+                    $"{subjectName}当前空闲，并具有「{tag}」状态";
             }
+
+            if (negated)
+            {
+                return $"{subjectName}当前不能使用";
+            }
+
+            return
+                int.TryParse(subject, out int numericId)
+                &&
+                IsCharacter(numericId)
+                    ?
+                    $"{subjectName}当前空闲，可以出面"
+                    :
+                    $"{subjectName}当前没有被占用，可以使用";
         }
 
         var counterMatch =
@@ -1465,6 +1570,10 @@ public sealed class GuideDatabase
             atom.Key.TrimStart('!');
 
         if (
+            !AmbiguousConditionHints.Contains(
+                originalKey
+            )
+            &&
             ConditionHints.TryGetValue(
                 originalKey,
                 out var comment
@@ -2582,14 +2691,14 @@ public sealed class GuideDatabase
                     JsonValueKind.Number
                     &&
                     item.TryGetInt32(
-                        out var itemId
+                        out var id
                     )
                 )
                 {
                     node.Links.Add(
                         new GuideLink(
                             label,
-                            itemId,
+                            id,
                             kind
                         )
                     );
