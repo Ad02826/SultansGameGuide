@@ -1,5 +1,7 @@
 using System;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using BepInEx.Logging;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -33,6 +35,20 @@ public sealed class GuideOverlay : MonoBehaviour
         public bool IsCurrent { get; init; }
     }
 
+    private enum ConditionRuntimeState
+    {
+        Unknown,
+        Met,
+        Unmet
+    }
+
+    private sealed class ConditionCheckRow
+    {
+        public ConditionRuntimeState State { get; init; }
+        public string Text { get; init; } = "";
+        public string Detail { get; init; } = "";
+    }
+
     private static GuideDatabase? _db;
 
     private static bool _visible = true;
@@ -63,6 +79,10 @@ public sealed class GuideOverlay : MonoBehaviour
 
     private static readonly Stack<int> _history = new();
 
+    // “触发机制”分支默认折叠；点击分支名后展开。
+    private static readonly HashSet<string> _expandedTriggerBranches =
+        new();
+
     // 左侧“当前仪式”列表滚动位置
     private static Vector2 _runtimeScroll = Vector2.zero;
 
@@ -89,11 +109,20 @@ public sealed class GuideOverlay : MonoBehaviour
     private static GUIStyle? _wrapButton;
     private static GUIStyle? _boxStyle;
     private static GUIStyle? _softBoxStyle;
+    private static GUIStyle? _triggerTitleStyle;
+    private static GUIStyle? _statusTitleStyle;
+    private static GUIStyle? _stateIconSymbolStyle;
     private static GUIStyle? _activeButtonStyle;
     private static GUIStyle? _selectedButtonStyle;
 
     private static Texture2D? _panelTex;
     private static Texture2D? _softTex;
+    private static Texture2D? _triggerGroupTex;
+    private static Texture2D? _triggerBorderTex;
+    private static Texture2D? _branchBorderTex;
+    private static Texture2D? _stateMetCircleTex;
+    private static Texture2D? _stateUnmetCircleTex;
+    private static Texture2D? _stateUnknownCircleTex;
     private static Texture2D? _activeTex;
     private static Texture2D? _selectedTex;
 
@@ -1088,7 +1117,7 @@ public sealed class GuideOverlay : MonoBehaviour
                 330,
                 22
             ),
-            "v0.4.86 · 正式版",
+            "v0.4.98 · 状态图标对齐精简",
             _small
         );
 
@@ -1789,23 +1818,6 @@ public sealed class GuideOverlay : MonoBehaviour
             return;
         }
 
-        // 先估算整个右侧详情所需高度，
-        // 再创建一个真正的垂直 ScrollView。
-        string condition =
-            string.IsNullOrWhiteSpace(
-                node.HumanCondition
-            )
-                ?
-                "没有额外要求。"
-                :
-                node.HumanCondition;
-
-        float conditionHeight =
-            EstimateTextHeight(
-                condition,
-                58
-            );
-
         float outcomeHeight =
             0f;
 
@@ -1827,8 +1839,6 @@ public sealed class GuideOverlay : MonoBehaviour
             ??
             "";
 
-        // 有滚动以后，不需要像以前那样过早截断。
-        // 仍设置一个较高上限，避免极端配置让单个节点无限拉长。
         if (
             result.Length
             >
@@ -1860,10 +1870,15 @@ public sealed class GuideOverlay : MonoBehaviour
         int linkCount =
             node.Links.Count;
 
+        float triggerHeight =
+            EstimateTriggerMechanismHeight(
+                node
+            );
+
         float contentHeight =
-            62f                         // 标题
+            62f
             +
-            27f + conditionHeight + 16f
+            triggerHeight
             +
             (
                 outcomeHeight > 0
@@ -1890,7 +1905,7 @@ public sealed class GuideOverlay : MonoBehaviour
             *
             50f
             +
-            40f;
+            60f;
 
         float viewWidth =
             Math.Max(
@@ -1927,7 +1942,6 @@ public sealed class GuideOverlay : MonoBehaviour
                 viewRect
             );
 
-        // ScrollView 内部使用相对坐标。
         float localX =
             6f;
 
@@ -2004,7 +2018,7 @@ public sealed class GuideOverlay : MonoBehaviour
             50f;
 
         // =========================
-        // 怎么触发
+        // 触发机制
         // =========================
         GUI.Label(
             new Rect(
@@ -2013,41 +2027,223 @@ public sealed class GuideOverlay : MonoBehaviour
                 localW,
                 24
             ),
-            "怎么触发？",
-            _subTitle
+            "触发机制",
+            _triggerTitleStyle
         );
 
         cy +=
-            27f;
+            32f;
 
-        GUI.Box(
+        // 用一个完整的大框把当前节点的所有触发分支包起来。
+        // 分支仍然保持默认折叠；展开后的条件详情继续显示在框内。
+        float triggerGroupHeight =
+            EstimateTriggerBranchGroupHeight(
+                node
+            );
+
+        float triggerGroupY =
+            cy;
+
+        DrawTriggerGroupFrame(
             new Rect(
                 localX,
-                cy,
+                triggerGroupY,
                 localW,
-                conditionHeight
-            ),
-            ""
+                triggerGroupHeight
+            )
         );
 
-        GUI.Label(
-            new Rect(
-                localX + 9,
-                cy + 7,
-                localW - 18,
-                conditionHeight - 14
-            ),
-            condition,
-            _body
-        );
+        float triggerInnerX =
+            localX + 10f;
+
+        float triggerInnerW =
+            localW - 20f;
 
         cy +=
-            conditionHeight
+            10f;
+
+        if (
+            node.TriggerBranches.Count
+            ==
+            0
+        )
+        {
+            GUI.Label(
+                new Rect(
+                    triggerInnerX,
+                    cy,
+                    triggerInnerW,
+                    44
+                ),
+                "没有解析到可展示的触发分支。",
+                _body
+            );
+
+            cy +=
+                44f;
+        }
+        else
+        {
+            for (
+                int i = 0;
+                i
+                <
+                node.TriggerBranches.Count;
+                i++
+            )
+            {
+                var branch =
+                    node.TriggerBranches[i];
+
+                string branchKey =
+                    BuildTriggerBranchKey(
+                        node,
+                        branch,
+                        i
+                    );
+
+                bool expanded =
+                    _expandedTriggerBranches.Contains(
+                        branchKey
+                    );
+
+                var state =
+                    EvaluateTriggerBranch(
+                        branch,
+                        out var rows
+                    );
+
+                float branchStartY =
+                    cy;
+
+                float branchHeight =
+                    EstimateTriggerBranchContainerHeight(
+                        branch,
+                        rows,
+                        expanded
+                    );
+
+                DrawTriggerBranchFrame(
+                    new Rect(
+                        triggerInnerX,
+                        branchStartY,
+                        triggerInnerW,
+                        branchHeight
+                    )
+                );
+
+                float headerX =
+                    triggerInnerX + 6f;
+
+                float headerY =
+                    branchStartY + 6f;
+
+                float headerW =
+                    triggerInnerW - 12f;
+
+                var buttonRect =
+                    new Rect(
+                        headerX,
+                        headerY,
+                        headerW,
+                        36f
+                    );
+
+                // 用空文字按钮只负责点击/悬停。
+                // 箭头、状态图标、分支名分开绘制，彻底避免文字与图标重叠。
+                if (
+                    GUI.Button(
+                        buttonRect,
+                        "",
+                        _wrapButton
+                    )
+                )
+                {
+                    if (
+                        expanded
+                    )
+                    {
+                        _expandedTriggerBranches.Remove(
+                            branchKey
+                        );
+                    }
+                    else
+                    {
+                        _expandedTriggerBranches.Add(
+                            branchKey
+                        );
+                    }
+                }
+
+                string arrow =
+                    expanded
+                        ?
+                        "▼"
+                        :
+                        "▶";
+
+                GUI.Label(
+                    new Rect(
+                        headerX + 8f,
+                        headerY + 6f,
+                        18f,
+                        24f
+                    ),
+                    arrow,
+                    _body
+                );
+
+                GUI.Label(
+                    new Rect(
+                        headerX + 32f,
+                        headerY + 4f,
+                        Math.Max(
+                            40f,
+                            headerW - 40f
+                        ),
+                        28f
+                    ),
+                    branch.Name,
+                    _body
+                );
+
+                cy =
+                    branchStartY
+                    +
+                    48f;
+
+                if (
+                    expanded
+                )
+                {
+                    DrawExpandedTriggerBranch(
+                        branch,
+                        rows,
+                        triggerInnerX + 12f,
+                        ref cy,
+                        triggerInnerW - 24f
+                    );
+                }
+
+                cy =
+                    branchStartY
+                    +
+                    branchHeight
+                    +
+                    8f;
+            }
+        }
+
+        // 对齐到大框底部，避免展开/折叠后后续区域位置漂移。
+        cy =
+            triggerGroupY
             +
-            14f;
+            triggerGroupHeight
+            +
+            10f;
 
         // =========================
-        // 接下来会怎样
+        // 节点走向
         // =========================
         if (
             outcomeHeight > 0
@@ -2060,7 +2256,13 @@ public sealed class GuideOverlay : MonoBehaviour
                     localW,
                     24
                 ),
-                "接下来会怎样？",
+                node.Kind
+                ==
+                NodeKind.Rite
+                    ?
+                    "仪式走向"
+                    :
+                    "事件走向",
                 _subTitle
             );
 
@@ -2186,8 +2388,6 @@ public sealed class GuideOverlay : MonoBehaviour
         }
         else
         {
-            // 有了滚动以后，不再只显示前 6 条。
-            // 所有后续分支都可以在右侧滚动查看。
             foreach (
                 var link
                 in
@@ -2224,6 +2424,1290 @@ public sealed class GuideOverlay : MonoBehaviour
         }
 
         GUI.EndScrollView();
+    }
+
+    private static void DrawTriggerGroupFrame(
+        Rect rect
+    )
+    {
+        // 右侧详情面板本身已经使用 _softTex；
+        // 如果这里只画同样的 _softTex，视觉上等于“没有框”。
+        // 所以这里显式画一层亮边框，再内缩画独立底色。
+        if (
+            _triggerBorderTex != null
+        )
+        {
+            GUI.DrawTexture(
+                rect,
+                _triggerBorderTex,
+                ScaleMode.StretchToFill,
+                false
+            );
+        }
+
+        if (
+            _triggerGroupTex != null
+        )
+        {
+            GUI.DrawTexture(
+                new Rect(
+                    rect.x + 2f,
+                    rect.y + 2f,
+                    Math.Max(
+                        0f,
+                        rect.width - 4f
+                    ),
+                    Math.Max(
+                        0f,
+                        rect.height - 4f
+                    )
+                ),
+                _triggerGroupTex,
+                ScaleMode.StretchToFill,
+                false
+            );
+        }
+    }
+
+    private static float EstimateTriggerMechanismHeight(
+        GuideNode node
+    )
+    {
+        return
+            32f
+            +
+            EstimateTriggerBranchGroupHeight(
+                node
+            )
+            +
+            10f;
+    }
+
+    private static float EstimateTriggerBranchGroupHeight(
+        GuideNode node
+    )
+    {
+        // 上下各留 10px 内边距，让所有分支视觉上属于同一个“触发机制”容器。
+        float height =
+            20f;
+
+        if (
+            node.TriggerBranches.Count
+            ==
+            0
+        )
+        {
+            return
+                height
+                +
+                44f;
+        }
+
+        for (
+            int i = 0;
+            i
+            <
+            node.TriggerBranches.Count;
+            i++
+        )
+        {
+            var branch =
+                node.TriggerBranches[i];
+
+            string key =
+                BuildTriggerBranchKey(
+                    node,
+                    branch,
+                    i
+                );
+
+            bool expanded =
+                _expandedTriggerBranches.Contains(
+                    key
+                );
+
+            EvaluateTriggerBranch(
+                branch,
+                out var rows
+            );
+
+            height +=
+                EstimateTriggerBranchContainerHeight(
+                    branch,
+                    rows,
+                    expanded
+                )
+                +
+                8f;
+        }
+
+        return
+            height;
+    }
+
+    private static float EstimateTriggerBranchContainerHeight(
+        GuideTriggerBranch branch,
+        List<ConditionCheckRow> rows,
+        bool expanded
+    )
+    {
+        float height =
+            48f;
+
+        if (
+            expanded
+        )
+        {
+            height +=
+                EstimateExpandedTriggerBranchHeight(
+                    branch,
+                    rows
+                );
+        }
+
+        return
+            height
+            +
+            6f;
+    }
+
+    private static void DrawTriggerBranchFrame(
+        Rect rect
+    )
+    {
+        if (
+            _branchBorderTex != null
+        )
+        {
+            GUI.DrawTexture(
+                rect,
+                _branchBorderTex,
+                ScaleMode.StretchToFill,
+                false
+            );
+        }
+
+        if (
+            _softTex != null
+        )
+        {
+            GUI.DrawTexture(
+                new Rect(
+                    rect.x + 1f,
+                    rect.y + 1f,
+                    Math.Max(
+                        0f,
+                        rect.width - 2f
+                    ),
+                    Math.Max(
+                        0f,
+                        rect.height - 2f
+                    )
+                ),
+                _softTex,
+                ScaleMode.StretchToFill,
+                false
+            );
+        }
+    }
+
+    private static float EstimateExpandedTriggerBranchHeight(
+        GuideTriggerBranch branch,
+        List<ConditionCheckRow> rows
+    )
+    {
+        string explanation =
+            BuildNaturalTriggerExplanation(
+                branch
+            );
+
+        float height =
+            12f
+            +
+            EstimateTextHeight(
+                explanation,
+                48f
+            )
+            +
+            8f;
+
+        if (
+            rows.Count > 0
+        )
+        {
+            height +=
+                24f;
+
+            foreach (
+                var row
+                in
+                rows
+            )
+            {
+                height +=
+                    EstimateConditionRowHeight(
+                        row
+                    );
+            }
+        }
+
+        return
+            height
+            +
+            12f;
+    }
+
+    private static float EstimateConditionRowHeight(
+        ConditionCheckRow row
+    )
+    {
+        float textHeight =
+            EstimateTextHeight(
+                row.Text,
+                24f
+            );
+
+        float detailHeight =
+            string.IsNullOrWhiteSpace(
+                row.Detail
+            )
+                ?
+                0f
+                :
+                EstimateTextHeight(
+                    row.Detail,
+                    22f
+                );
+
+        return
+            Math.Max(
+                42f,
+                textHeight
+                +
+                detailHeight
+                +
+                8f
+            );
+    }
+
+    private static void DrawExpandedTriggerBranch(
+        GuideTriggerBranch branch,
+        List<ConditionCheckRow> rows,
+        float x,
+        ref float cy,
+        float w
+    )
+    {
+        float startY =
+            cy;
+
+        float estimated =
+            EstimateExpandedTriggerBranchHeight(
+                branch,
+                rows
+            );
+
+        float innerX =
+            x;
+
+        float innerW =
+            w;
+
+        cy +=
+            4f;
+
+        string explanation =
+            BuildNaturalTriggerExplanation(
+                branch
+            );
+
+        float explanationHeight =
+            EstimateTextHeight(
+                explanation,
+                48f
+            );
+
+        GUI.Label(
+            new Rect(
+                innerX,
+                cy,
+                innerW,
+                explanationHeight
+            ),
+            explanation,
+            _body
+        );
+
+        cy +=
+            explanationHeight
+            +
+            8f;
+
+        // 实时条件状态仍保留，但不再拆成“检查阶段 / 条件 / 满足后”。
+        if (
+            rows.Count > 0
+        )
+        {
+            GUI.Label(
+                new Rect(
+                    innerX,
+                    cy,
+                    76f,
+                    22f
+                ),
+                "当前状态",
+                _statusTitleStyle
+            );
+
+            DrawConditionStateIcon(
+                new Rect(
+                    innerX + 74f,
+                    cy + 3f,
+                    16f,
+                    16f
+                ),
+                GetConditionRowsOverallState(
+                    rows
+                )
+            );
+
+            cy +=
+                22f;
+
+            foreach (
+                var row
+                in
+                rows
+            )
+            {
+                float rowHeight =
+                    EstimateConditionRowHeight(
+                        row
+                    );
+
+                GUI.Label(
+                    new Rect(
+                        innerX,
+                        cy,
+                        innerW,
+                        rowHeight
+                    ),
+                    string.IsNullOrWhiteSpace(
+                        row.Detail
+                    )
+                        ?
+                        row.Text
+                        :
+                        row.Text
+                        +
+                        "\n"
+                        +
+                        row.Detail,
+                    _body
+                );
+
+                cy +=
+                    rowHeight;
+            }
+        }
+
+        cy +=
+            10f;
+
+        cy =
+            Math.Max(
+                cy,
+                startY
+                +
+                estimated
+            );
+    }
+
+    private static string BuildNaturalTriggerExplanation(
+        GuideTriggerBranch branch
+    )
+    {
+        string source =
+            string.IsNullOrWhiteSpace(
+                branch.SourceName
+            )
+                ?
+                branch.Name
+                :
+                branch.SourceName;
+
+        string timing =
+            string.IsNullOrWhiteSpace(
+                branch.Timing
+            )
+                ?
+                ""
+                :
+                branch.Timing.Trim();
+
+        string effect =
+            string.IsNullOrWhiteSpace(
+                branch.Effect
+            )
+                ?
+                "执行该分支。"
+                :
+                branch.Effect.Trim();
+
+        // 展示层只做轻量去重，不改变数据库里的原始触发关系。
+        effect =
+            effect.Replace(
+                "满足后生成",
+                "生成",
+                StringComparison.Ordinal
+            );
+
+        if (
+            !effect.EndsWith(
+                "。",
+                StringComparison.Ordinal
+            )
+        )
+        {
+            effect +=
+                "。";
+        }
+
+        string sourceKind =
+            branch.SourceKind
+            ==
+            NodeKind.Rite
+                ?
+                "仪式"
+                :
+                "事件";
+
+        string sourceSentence =
+            branch.SourceId > 0
+                ?
+                $"{sourceKind}「{source}」{effect}"
+                :
+                effect;
+
+        if (
+            string.IsNullOrWhiteSpace(
+                timing
+            )
+        )
+        {
+            return
+                sourceSentence;
+        }
+
+        return
+            timing
+            +
+            "\n"
+            +
+            sourceSentence;
+    }
+
+    private static string BuildTriggerBranchKey(
+        GuideNode node,
+        GuideTriggerBranch branch,
+        int index
+    )
+    {
+        return
+            node.Id
+            +
+            ":"
+            +
+            index
+            +
+            ":"
+            +
+            branch.SourceId
+            +
+            ":"
+            +
+            branch.Name;
+    }
+
+    private static ConditionRuntimeState GetConditionRowsOverallState(
+        List<ConditionCheckRow> rows
+    )
+    {
+        bool hasUnknown =
+            false;
+
+        foreach (
+            var row
+            in
+            rows
+        )
+        {
+            if (
+                row.State
+                ==
+                ConditionRuntimeState.Unmet
+            )
+            {
+                return
+                    ConditionRuntimeState.Unmet;
+            }
+
+            if (
+                row.State
+                ==
+                ConditionRuntimeState.Unknown
+            )
+            {
+                hasUnknown =
+                    true;
+            }
+        }
+
+        return
+            hasUnknown
+                ?
+                ConditionRuntimeState.Unknown
+                :
+                ConditionRuntimeState.Met;
+    }
+
+    private static void DrawConditionStateIcon(
+        Rect rect,
+        ConditionRuntimeState state
+    )
+    {
+        Texture2D? circle =
+            state switch
+            {
+                ConditionRuntimeState.Met =>
+                    _stateMetCircleTex,
+
+                ConditionRuntimeState.Unmet =>
+                    _stateUnmetCircleTex,
+
+                _ =>
+                    _stateUnknownCircleTex
+            };
+
+        if (
+            circle != null
+        )
+        {
+            GUI.DrawTexture(
+                rect,
+                circle,
+                ScaleMode.StretchToFill,
+                true
+            );
+        }
+
+        string symbol =
+            state switch
+            {
+                ConditionRuntimeState.Met =>
+                    "✓",
+
+                ConditionRuntimeState.Unmet =>
+                    "×",
+
+                _ =>
+                    "?"
+            };
+
+        GUI.Label(
+            rect,
+            symbol,
+            _stateIconSymbolStyle
+        );
+    }
+
+    private static ConditionRuntimeState EvaluateTriggerBranch(
+        GuideTriggerBranch branch,
+        out List<ConditionCheckRow> rows
+    )
+    {
+        rows =
+            new List<ConditionCheckRow>();
+
+        if (
+            branch.IsFallback
+        )
+        {
+            string fallbackCondition =
+                !string.IsNullOrWhiteSpace(
+                    branch.RawCondition
+                )
+                    ?
+                    branch.RawCondition.Trim()
+                    :
+                    branch.HumanCondition;
+
+            if (
+                !string.IsNullOrWhiteSpace(
+                    fallbackCondition
+                )
+                &&
+                !IsNoExtraConditionText(
+                    fallbackCondition
+                )
+            )
+            {
+                rows.Add(
+                    new ConditionCheckRow
+                    {
+                        State =
+                            ConditionRuntimeState.Unknown,
+                        Text =
+                            "待适配条件",
+                        Detail =
+                            "原始条件："
+                            +
+                            fallbackCondition
+                    }
+                );
+            }
+
+            return
+                ConditionRuntimeState.Unknown;
+        }
+
+        if (
+            string.IsNullOrWhiteSpace(
+                branch.RawCondition
+            )
+            ||
+            IsNoExtraConditionText(
+                branch.HumanCondition
+            )
+        )
+        {
+            // 没有额外要求就是“无条件分支”：
+            // 分支本身显示绿色 ✓ 即可，不再展开“当前状态 / 没有额外要求”。
+            return
+                ConditionRuntimeState.Met;
+        }
+
+        try
+        {
+            using var doc =
+                JsonDocument.Parse(
+                    branch.RawCondition
+                );
+
+            return
+                EvaluateConditionElement(
+                    doc.RootElement,
+                    rows,
+                    true
+                );
+        }
+        catch
+        {
+            string raw =
+                string.IsNullOrWhiteSpace(
+                    branch.RawCondition
+                )
+                    ?
+                    branch.HumanCondition
+                    :
+                    branch.RawCondition.Trim();
+
+            if (
+                !string.IsNullOrWhiteSpace(
+                    raw
+                )
+                &&
+                !IsNoExtraConditionText(
+                    raw
+                )
+            )
+            {
+                rows.Add(
+                    new ConditionCheckRow
+                    {
+                        State =
+                            ConditionRuntimeState.Unknown,
+                        Text =
+                            "待适配条件",
+                        Detail =
+                            "原始条件："
+                            +
+                            raw
+                    }
+                );
+            }
+
+            return
+                ConditionRuntimeState.Unknown;
+        }
+    }
+
+    private static bool IsNoExtraConditionText(
+        string? text
+    )
+    {
+        if (
+            string.IsNullOrWhiteSpace(
+                text
+            )
+        )
+        {
+            return
+                true;
+        }
+
+        string normalized =
+            text
+                .Trim()
+                .TrimEnd(
+                    '。',
+                    '.'
+                );
+
+        return
+            normalized.Equals(
+                "没有额外要求",
+                StringComparison.Ordinal
+            )
+            ||
+            normalized.Equals(
+                "没有额外条件",
+                StringComparison.Ordinal
+            );
+    }
+
+    private static ConditionRuntimeState EvaluateConditionElement(
+        JsonElement element,
+        List<ConditionCheckRow> rows,
+        bool allByDefault
+    )
+    {
+        if (
+            element.ValueKind
+            ==
+            JsonValueKind.Object
+        )
+        {
+            var states =
+                new List<ConditionRuntimeState>();
+
+            foreach (
+                var property
+                in
+                element.EnumerateObject()
+            )
+            {
+                if (
+                    property.Name.Equals(
+                        "all",
+                        StringComparison.OrdinalIgnoreCase
+                    )
+                )
+                {
+                    states.Add(
+                        EvaluateConditionElement(
+                            property.Value,
+                            rows,
+                            true
+                        )
+                    );
+
+                    continue;
+                }
+
+                if (
+                    property.Name.Equals(
+                        "any",
+                        StringComparison.OrdinalIgnoreCase
+                    )
+                )
+                {
+                    states.Add(
+                        EvaluateConditionElement(
+                            property.Value,
+                            rows,
+                            false
+                        )
+                    );
+
+                    continue;
+                }
+
+                states.Add(
+                    EvaluateConditionAtom(
+                        property.Name,
+                        property.Value,
+                        rows
+                    )
+                );
+            }
+
+            return
+                CombineConditionStates(
+                    states,
+                    allByDefault
+                );
+        }
+
+        if (
+            element.ValueKind
+            ==
+            JsonValueKind.Array
+        )
+        {
+            var states =
+                new List<ConditionRuntimeState>();
+
+            foreach (
+                var item
+                in
+                element.EnumerateArray()
+            )
+            {
+                states.Add(
+                    EvaluateConditionElement(
+                        item,
+                        rows,
+                        allByDefault
+                    )
+                );
+            }
+
+            return
+                CombineConditionStates(
+                    states,
+                    allByDefault
+                );
+        }
+
+        return
+            ConditionRuntimeState.Unknown;
+    }
+
+    private static ConditionRuntimeState CombineConditionStates(
+        List<ConditionRuntimeState> states,
+        bool all
+    )
+    {
+        if (
+            states.Count
+            ==
+            0
+        )
+        {
+            return
+                ConditionRuntimeState.Met;
+        }
+
+        if (all)
+        {
+            if (
+                states.Any(
+                    x =>
+                        x
+                        ==
+                        ConditionRuntimeState.Unmet
+                )
+            )
+            {
+                return
+                    ConditionRuntimeState.Unmet;
+            }
+
+            if (
+                states.All(
+                    x =>
+                        x
+                        ==
+                        ConditionRuntimeState.Met
+                )
+            )
+            {
+                return
+                    ConditionRuntimeState.Met;
+            }
+
+            return
+                ConditionRuntimeState.Unknown;
+        }
+
+        if (
+            states.Any(
+                x =>
+                    x
+                    ==
+                    ConditionRuntimeState.Met
+            )
+        )
+        {
+            return
+                ConditionRuntimeState.Met;
+        }
+
+        if (
+            states.All(
+                x =>
+                    x
+                    ==
+                    ConditionRuntimeState.Unmet
+            )
+        )
+        {
+            return
+                ConditionRuntimeState.Unmet;
+        }
+
+        return
+            ConditionRuntimeState.Unknown;
+    }
+
+    private static ConditionRuntimeState EvaluateConditionAtom(
+        string key,
+        JsonElement value,
+        List<ConditionCheckRow> rows
+    )
+    {
+        string human =
+            _db != null
+                ?
+                _db.HumanizeConditionAtom(
+                    key,
+                    value
+                )
+                :
+                key;
+
+        var counterMatch =
+            Regex.Match(
+                key,
+                @"^counter\.(\d+)(>=|<=|>|<|=)?$"
+            );
+
+        if (
+            counterMatch.Success
+            &&
+            value.ValueKind
+            ==
+            JsonValueKind.Number
+            &&
+            value.TryGetInt32(
+                out var target
+            )
+        )
+        {
+            try
+            {
+                var player =
+                    Common.Player;
+
+                if (
+                    player
+                    ==
+                    null
+                )
+                {
+                    rows.Add(
+                        new ConditionCheckRow
+                        {
+                            State =
+                                ConditionRuntimeState.Unknown,
+                            Text =
+                                human,
+                            Detail =
+                                "当前不在可读取的游戏局内。"
+                        }
+                    );
+
+                    return
+                        ConditionRuntimeState.Unknown;
+                }
+
+                int counterId =
+                    int.Parse(
+                        counterMatch
+                            .Groups[1]
+                            .Value
+                    );
+
+                string op =
+                    counterMatch
+                        .Groups[2]
+                        .Success
+                            ?
+                            counterMatch
+                                .Groups[2]
+                                .Value
+                            :
+                            "=";
+
+                int current =
+                    PlayerExtensions.GetCounter(
+                        player,
+                        counterId
+                    );
+
+                bool met =
+                    CompareCounter(
+                        current,
+                        target,
+                        op
+                    );
+
+                rows.Add(
+                    new ConditionCheckRow
+                    {
+                        State =
+                            met
+                                ?
+                                ConditionRuntimeState.Met
+                                :
+                                ConditionRuntimeState.Unmet,
+                        Text =
+                            human,
+                        Detail =
+                            BuildCounterProgressText(
+                                current,
+                                target,
+                                op,
+                                met
+                            )
+                    }
+                );
+
+                return
+                    met
+                        ?
+                        ConditionRuntimeState.Met
+                        :
+                        ConditionRuntimeState.Unmet;
+            }
+            catch
+            {
+                rows.Add(
+                    new ConditionCheckRow
+                    {
+                        State =
+                            ConditionRuntimeState.Unknown,
+                        Text =
+                            human,
+                        Detail =
+                            "这个计数条件当前读取失败。"
+                    }
+                );
+
+                return
+                    ConditionRuntimeState.Unknown;
+            }
+        }
+
+        if (
+            (
+                key.Equals(
+                    "rite",
+                    StringComparison.OrdinalIgnoreCase
+                )
+                ||
+                key.Equals(
+                    "!rite",
+                    StringComparison.OrdinalIgnoreCase
+                )
+            )
+            &&
+            value.ValueKind
+            ==
+            JsonValueKind.Number
+            &&
+            value.TryGetInt32(
+                out var riteId
+            )
+        )
+        {
+            bool shouldExist =
+                !key.StartsWith(
+                    "!",
+                    StringComparison.Ordinal
+                );
+
+            bool exists =
+                _runtimeRiteIds.Contains(
+                    riteId
+                );
+
+            bool met =
+                shouldExist
+                    ?
+                    exists
+                    :
+                    !exists;
+
+            string riteName =
+                _db != null
+                &&
+                _db.RiteNames.TryGetValue(
+                    riteId,
+                    out var name
+                )
+                    ?
+                    $"《{name}》"
+                    :
+                    "对应仪式";
+
+            rows.Add(
+                new ConditionCheckRow
+                {
+                    State =
+                        met
+                            ?
+                            ConditionRuntimeState.Met
+                            :
+                            ConditionRuntimeState.Unmet,
+                    Text =
+                        human,
+                    Detail =
+                        $"当前：{riteName}{(exists ? "存在于地图" : "不在地图上")}。"
+                }
+            );
+
+            return
+                met
+                    ?
+                    ConditionRuntimeState.Met
+                    :
+                    ConditionRuntimeState.Unmet;
+        }
+
+        string rawAtom =
+            key
+            +
+            " = "
+            +
+            value.GetRawText();
+
+        rows.Add(
+            new ConditionCheckRow
+            {
+                State =
+                    ConditionRuntimeState.Unknown,
+                Text =
+                    string.IsNullOrWhiteSpace(
+                        human
+                    )
+                        ?
+                        "待适配条件"
+                        :
+                        human,
+                Detail =
+                    "原始条件："
+                    +
+                    rawAtom
+            }
+        );
+
+        return
+            ConditionRuntimeState.Unknown;
+    }
+
+    private static bool CompareCounter(
+        int current,
+        int target,
+        string op
+    )
+    {
+        return op switch
+        {
+            ">=" =>
+                current >= target,
+
+            "<=" =>
+                current <= target,
+
+            ">" =>
+                current > target,
+
+            "<" =>
+                current < target,
+
+            "=" =>
+                current == target,
+
+            _ =>
+                false
+        };
+    }
+
+    private static string BuildCounterProgressText(
+        int current,
+        int target,
+        string op,
+        bool met
+    )
+    {
+        string requirement =
+            op
+            +
+            target;
+
+        string progress =
+            $"当前：{current}；要求：{requirement}。";
+
+        if (met)
+        {
+            return
+                progress
+                +
+                " 已满足。";
+        }
+
+        if (
+            op
+            ==
+            ">="
+        )
+        {
+            return
+                progress
+                +
+                $" 还差：{Math.Max(0, target - current)}。";
+        }
+
+        if (
+            op
+            ==
+            ">"
+        )
+        {
+            return
+                progress
+                +
+                $" 还差：{Math.Max(0, target + 1 - current)}。";
+        }
+
+        if (
+            op
+            ==
+            "<="
+        )
+        {
+            return
+                progress
+                +
+                $" 当前已超过上限 {Math.Max(0, current - target)}。";
+        }
+
+        if (
+            op
+            ==
+            "<"
+        )
+        {
+            return
+                progress
+                +
+                $" 当前已超过允许范围 {Math.Max(0, current - (target - 1))}。";
+        }
+
+        return
+            progress;
     }
 
     private static float EstimateTextHeight(
@@ -2498,6 +3982,89 @@ public sealed class GuideOverlay : MonoBehaviour
             );
     }
 
+    private static Texture2D CreateStateCircleTexture(
+        Color fill
+    )
+    {
+        const int size =
+            32;
+
+        var tex =
+            new Texture2D(
+                size,
+                size
+            );
+
+        float center =
+            (size - 1)
+            *
+            0.5f;
+
+        float radius =
+            center
+            -
+            1f;
+
+        for (
+            int y = 0;
+            y < size;
+            y++
+        )
+        {
+            for (
+                int x = 0;
+                x < size;
+                x++
+            )
+            {
+                float dx =
+                    x
+                    -
+                    center;
+
+                float dy =
+                    y
+                    -
+                    center;
+
+                float distance =
+                    Mathf.Sqrt(
+                        dx * dx
+                        +
+                        dy * dy
+                    );
+
+                // 1px 左右的柔和边缘，缩放到 20~24px 时不会显得锯齿太重。
+                float alpha =
+                    Mathf.Clamp01(
+                        radius
+                        -
+                        distance
+                        +
+                        1f
+                    );
+
+                tex.SetPixel(
+                    x,
+                    y,
+                    new Color(
+                        fill.r,
+                        fill.g,
+                        fill.b,
+                        fill.a
+                        *
+                        alpha
+                    )
+                );
+            }
+        }
+
+        tex.Apply();
+
+        return
+            tex;
+    }
+
     private static void EnsureStyles()
     {
         if (
@@ -2552,6 +4119,135 @@ public sealed class GuideOverlay : MonoBehaviour
             );
 
             _softTex.Apply();
+        }
+
+        if (
+            _triggerGroupTex
+            ==
+            null
+        )
+        {
+            _triggerGroupTex =
+                new Texture2D(
+                    1,
+                    1
+                );
+
+            _triggerGroupTex.SetPixel(
+                0,
+                0,
+                new Color(
+                    0.065f,
+                    0.090f,
+                    0.120f,
+                    1.00f
+                )
+            );
+
+            _triggerGroupTex.Apply();
+        }
+
+        if (
+            _triggerBorderTex
+            ==
+            null
+        )
+        {
+            _triggerBorderTex =
+                new Texture2D(
+                    1,
+                    1
+                );
+
+            _triggerBorderTex.SetPixel(
+                0,
+                0,
+                new Color(
+                    0.22f,
+                    0.40f,
+                    0.53f,
+                    1.00f
+                )
+            );
+
+            _triggerBorderTex.Apply();
+        }
+
+        if (
+            _branchBorderTex
+            ==
+            null
+        )
+        {
+            _branchBorderTex =
+                new Texture2D(
+                    1,
+                    1
+                );
+
+            _branchBorderTex.SetPixel(
+                0,
+                0,
+                new Color(
+                    0.16f,
+                    0.28f,
+                    0.36f,
+                    1.00f
+                )
+            );
+
+            _branchBorderTex.Apply();
+        }
+
+        if (
+            _stateMetCircleTex
+            ==
+            null
+        )
+        {
+            _stateMetCircleTex =
+                CreateStateCircleTexture(
+                    new Color(
+                        0.10f,
+                        0.55f,
+                        0.27f,
+                        1f
+                    )
+                );
+        }
+
+        if (
+            _stateUnmetCircleTex
+            ==
+            null
+        )
+        {
+            _stateUnmetCircleTex =
+                CreateStateCircleTexture(
+                    new Color(
+                        0.82f,
+                        0.13f,
+                        0.19f,
+                        1f
+                    )
+                );
+        }
+
+        if (
+            _stateUnknownCircleTex
+            ==
+            null
+        )
+        {
+            _stateUnknownCircleTex =
+                CreateStateCircleTexture(
+                    new Color(
+                        0.38f,
+                        0.43f,
+                        0.49f,
+                        1f
+                    )
+                );
         }
 
         if (
@@ -2693,6 +4389,58 @@ public sealed class GuideOverlay : MonoBehaviour
         }
 
         if (
+            _triggerTitleStyle
+            ==
+            null
+        )
+        {
+            _triggerTitleStyle =
+                new GUIStyle();
+
+            _triggerTitleStyle.fontSize =
+                15;
+
+            _triggerTitleStyle.fontStyle =
+                FontStyle.Bold;
+
+            _triggerTitleStyle
+                .normal
+                .textColor =
+                    new Color(
+                        0.70f,
+                        0.88f,
+                        1.00f,
+                        1f
+                    );
+        }
+
+        if (
+            _statusTitleStyle
+            ==
+            null
+        )
+        {
+            _statusTitleStyle =
+                new GUIStyle();
+
+            _statusTitleStyle.fontSize =
+                12;
+
+            _statusTitleStyle.fontStyle =
+                FontStyle.Bold;
+
+            _statusTitleStyle
+                .normal
+                .textColor =
+                    new Color(
+                        0.66f,
+                        0.76f,
+                        0.84f,
+                        1f
+                    );
+        }
+
+        if (
             _body
             ==
             null
@@ -2792,6 +4540,30 @@ public sealed class GuideOverlay : MonoBehaviour
 
             _wrapButton
                 .active
+                .textColor =
+                    Color.white;
+        }
+
+        if (
+            _stateIconSymbolStyle
+            ==
+            null
+        )
+        {
+            _stateIconSymbolStyle =
+                new GUIStyle();
+
+            _stateIconSymbolStyle.fontSize =
+                11;
+
+            _stateIconSymbolStyle.fontStyle =
+                FontStyle.Bold;
+
+            _stateIconSymbolStyle.alignment =
+                TextAnchor.MiddleCenter;
+
+            _stateIconSymbolStyle
+                .normal
                 .textColor =
                     Color.white;
         }
