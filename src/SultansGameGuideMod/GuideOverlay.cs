@@ -1117,7 +1117,7 @@ public sealed class GuideOverlay : MonoBehaviour
                 330,
                 22
             ),
-            "v0.4.97 · 分支整框修复",
+            "v0.4.98 · 状态图标对齐精简",
             _small
         );
 
@@ -2193,23 +2193,13 @@ public sealed class GuideOverlay : MonoBehaviour
                     _body
                 );
 
-                DrawConditionStateIcon(
-                    new Rect(
-                        headerX + 30f,
-                        headerY + 7f,
-                        22f,
-                        22f
-                    ),
-                    state
-                );
-
                 GUI.Label(
                     new Rect(
-                        headerX + 60f,
+                        headerX + 32f,
                         headerY + 4f,
                         Math.Max(
                             40f,
-                            headerW - 68f
+                            headerW - 40f
                         ),
                         28f
                     ),
@@ -2762,7 +2752,7 @@ public sealed class GuideOverlay : MonoBehaviour
                 new Rect(
                     innerX,
                     cy,
-                    72f,
+                    76f,
                     22f
                 ),
                 "当前状态",
@@ -2771,10 +2761,10 @@ public sealed class GuideOverlay : MonoBehaviour
 
             DrawConditionStateIcon(
                 new Rect(
-                    innerX + 66f,
-                    cy + 1f,
-                    20f,
-                    20f
+                    innerX + 74f,
+                    cy + 3f,
+                    16f,
+                    16f
                 ),
                 GetConditionRowsOverallState(
                     rows
@@ -2795,21 +2785,11 @@ public sealed class GuideOverlay : MonoBehaviour
                         row
                     );
 
-                DrawConditionStateIcon(
-                    new Rect(
-                        innerX,
-                        cy + 2f,
-                        24f,
-                        24f
-                    ),
-                    row.State
-                );
-
                 GUI.Label(
                     new Rect(
-                        innerX + 26f,
+                        innerX,
                         cy,
-                        innerW - 26f,
+                        innerW,
                         rowHeight
                     ),
                     string.IsNullOrWhiteSpace(
@@ -4574,7 +4554,7 @@ public sealed class GuideOverlay : MonoBehaviour
                 new GUIStyle();
 
             _stateIconSymbolStyle.fontSize =
-                14;
+                11;
 
             _stateIconSymbolStyle.fontStyle =
                 FontStyle.Bold;
