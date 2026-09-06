@@ -1108,7 +1108,7 @@ public sealed class GuideOverlay : MonoBehaviour
                 330,
                 22
             ),
-            "v0.4.92 · 触发机制自然语言精简",
+            "v0.4.93 · 触发机制自然语言·BuildFix",
             _small
         );
 
@@ -2453,36 +2453,21 @@ public sealed class GuideOverlay : MonoBehaviour
     }
 
     private static float EstimateExpandedTriggerBranchHeight(
-        TriggerBranch branch,
-        List<TriggerConditionRow> rows
+        GuideTriggerBranch branch,
+        List<ConditionCheckRow> rows
     )
     {
-        float w =
-            Mathf.Max(
-                220f,
-                _windowRect.width
-                -
-                LeftPaneWidth
-                -
-                96f
-            );
-
         string explanation =
             BuildNaturalTriggerExplanation(
                 branch
             );
 
         float height =
-            Mathf.Max(
-                42f,
-                _body!.CalcHeight(
-                    new GUIContent(
-                        explanation
-                    ),
-                    w
-                )
-                +
-                10f
+            12f
+            +
+            EstimateTextHeight(
+                explanation,
+                48f
             )
             +
             8f;
@@ -2492,7 +2477,7 @@ public sealed class GuideOverlay : MonoBehaviour
         )
         {
             height +=
-                28f;
+                26f;
 
             foreach (
                 var row
@@ -2501,17 +2486,16 @@ public sealed class GuideOverlay : MonoBehaviour
             )
             {
                 height +=
-                    EstimateTriggerConditionRowHeight(
-                        row,
-                        w - 28f
-                    )
-                    +
-                    4f;
+                    EstimateConditionRowHeight(
+                        row
+                    );
             }
         }
 
         return
-            height;
+            height
+            +
+            12f;
     }
 
     private static float EstimateConditionRowHeight(
@@ -2548,38 +2532,58 @@ public sealed class GuideOverlay : MonoBehaviour
     }
 
     private static void DrawExpandedTriggerBranch(
-        TriggerBranch branch,
-        List<TriggerConditionRow> rows,
+        GuideTriggerBranch branch,
+        List<ConditionCheckRow> rows,
         float x,
         ref float cy,
         float w
     )
     {
-        // 玩家视角只保留“这条分支做了什么，因此为什么会触发当前节点”。
-        // 不再拆成“检查阶段 / 触发条件 / 满足后”三段调试器式结构。
+        float startY =
+            cy;
+
+        float estimated =
+            EstimateExpandedTriggerBranchHeight(
+                branch,
+                rows
+            );
+
+        GUI.Box(
+            new Rect(
+                x,
+                startY,
+                w,
+                estimated
+            ),
+            "",
+            _softBoxStyle
+        );
+
+        float innerX =
+            x + 10f;
+
+        float innerW =
+            w - 20f;
+
+        cy +=
+            10f;
+
         string explanation =
             BuildNaturalTriggerExplanation(
                 branch
             );
 
         float explanationHeight =
-            Mathf.Max(
-                42f,
-                _body!.CalcHeight(
-                    new GUIContent(
-                        explanation
-                    ),
-                    w
-                )
-                +
-                10f
+            EstimateTextHeight(
+                explanation,
+                48f
             );
 
         GUI.Label(
             new Rect(
-                x,
+                innerX,
                 cy,
-                w,
+                innerW,
                 explanationHeight
             ),
             explanation,
@@ -2591,29 +2595,23 @@ public sealed class GuideOverlay : MonoBehaviour
             +
             8f;
 
-        // 仍然保留实时条件状态，但只作为“当前状态”附加信息。
         if (
             rows.Count > 0
         )
         {
-            float titleHeight =
-                24f;
-
             GUI.Label(
                 new Rect(
-                    x,
+                    innerX,
                     cy,
-                    w,
-                    titleHeight
+                    innerW,
+                    22f
                 ),
                 "当前状态",
-                _sectionTitle
+                _subTitle
             );
 
             cy +=
-                titleHeight
-                +
-                4f;
+                24f;
 
             foreach (
                 var row
@@ -2622,216 +2620,139 @@ public sealed class GuideOverlay : MonoBehaviour
             )
             {
                 float rowHeight =
-                    EstimateTriggerConditionRowHeight(
-                        row,
-                        w
+                    EstimateConditionRowHeight(
+                        row
                     );
 
                 DrawConditionStateIcon(
                     new Rect(
-                        x,
+                        innerX,
                         cy + 2f,
-                        22f,
-                        22f
+                        24f,
+                        24f
                     ),
                     row.State
                 );
 
                 GUI.Label(
                     new Rect(
-                        x + 28f,
+                        innerX + 26f,
                         cy,
-                        w - 28f,
+                        innerW - 26f,
                         rowHeight
                     ),
-                    BuildTriggerConditionStatusText(
-                        row
-                    ),
+                    string.IsNullOrWhiteSpace(
+                        row.Detail
+                    )
+                        ?
+                        row.Text
+                        :
+                        row.Text
+                        +
+                        "\n"
+                        +
+                        row.Detail,
                     _body
                 );
 
                 cy +=
-                    rowHeight
-                    +
-                    4f;
+                    rowHeight;
             }
         }
+
+        cy +=
+            10f;
+
+        cy =
+            Math.Max(
+                cy,
+                startY
+                +
+                estimated
+            );
     }
 
     private static string BuildNaturalTriggerExplanation(
-        TriggerBranch branch
+        GuideTriggerBranch branch
     )
     {
         string source =
             string.IsNullOrWhiteSpace(
-                branch.SourceTitle
+                branch.SourceName
             )
                 ?
                 branch.Name
                 :
-                branch.SourceTitle;
+                branch.SourceName;
 
         string timing =
-            HumanizeTriggerTiming(
+            string.IsNullOrWhiteSpace(
                 branch.Timing
+            )
+                ?
+                ""
+                :
+                branch.Timing.Trim();
+
+        string effect =
+            string.IsNullOrWhiteSpace(
+                branch.Effect
+            )
+                ?
+                "执行该分支。"
+                :
+                branch.Effect.Trim();
+
+        effect =
+            effect.Replace(
+                "满足后生成",
+                "生成",
+                StringComparison.Ordinal
             );
 
-        string action =
-            HumanizeTriggerAction(
-                branch
-            );
-
         if (
-            string.IsNullOrWhiteSpace(
-                timing
+            !effect.EndsWith(
+                "。",
+                StringComparison.Ordinal
             )
         )
         {
-            return
-                $"「{source}」会{action}。";
+            effect +=
+                "。";
         }
 
-        return
-            $"{timing}，「{source}」会{action}。";
-    }
+        string sourceKind =
+            branch.SourceKind
+            ==
+            NodeKind.Rite
+                ?
+                "仪式"
+                :
+                "事件";
 
-    private static string HumanizeTriggerTiming(
-        string timing
-    )
-    {
-        if (
-            string.IsNullOrWhiteSpace(
-                timing
-            )
-        )
-        {
-            return "";
-        }
-
-        string t =
-            timing.Trim();
-
-        if (
-            t.Contains(
-                "round_begin",
-                StringComparison.OrdinalIgnoreCase
-            )
-        )
-        {
-            return "新回合开始时";
-        }
-
-        if (
-            t.Contains(
-                "rite_start",
-                StringComparison.OrdinalIgnoreCase
-            )
-        )
-        {
-            return "相关仪式开始时";
-        }
-
-        if (
-            t.Contains(
-                "rite_end",
-                StringComparison.OrdinalIgnoreCase
-            )
-        )
-        {
-            return "相关仪式结束时";
-        }
-
-        if (
-            t.Contains(
-                "card_born",
-                StringComparison.OrdinalIgnoreCase
-            )
-        )
-        {
-            return "相关卡牌出现时";
-        }
-
-        if (
-            t.Contains(
-                "card_clean",
-                StringComparison.OrdinalIgnoreCase
-            )
-        )
-        {
-            return "相关卡牌被移除时";
-        }
-
-        if (
-            t.Contains(
-                "game_end",
-                StringComparison.OrdinalIgnoreCase
-            )
-        )
-        {
-            return "本局结束时";
-        }
-
-        return "";
-    }
-
-    private static string HumanizeTriggerAction(
-        TriggerBranch branch
-    )
-    {
-        if (
-            !string.IsNullOrWhiteSpace(
-                branch.EffectText
-            )
-        )
-        {
-            string effect =
-                branch.EffectText.Trim();
-
-            if (
-                effect.EndsWith(
-                    "。",
-                    StringComparison.Ordinal
-                )
-            )
-            {
-                effect =
-                    effect.Substring(
-                        0,
-                        effect.Length - 1
-                    );
-            }
-
-            return
+        string sentence =
+            branch.SourceId > 0
+                ?
+                $"{sourceKind}「{source}」{effect}"
+                :
                 effect;
-        }
-
-        return
-            "执行该分支的结果";
-    }
-
-    private static string BuildTriggerConditionStatusText(
-        TriggerConditionRow row
-    )
-    {
-        string text =
-            row.Text
-            ??
-            "";
 
         if (
-            !string.IsNullOrWhiteSpace(
-                row.Detail
+            string.IsNullOrWhiteSpace(
+                timing
             )
         )
         {
-            text +=
-                "\n"
-                +
-                row.Detail;
+            return
+                sentence;
         }
 
         return
-            text;
+            timing
+            +
+            "\n"
+            +
+            sentence;
     }
 
     private static string BuildTriggerBranchKey(
