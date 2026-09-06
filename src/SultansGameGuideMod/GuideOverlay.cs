@@ -532,358 +532,93 @@ public sealed class GuideOverlay : MonoBehaviour
     // ============================================================
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static bool TryGetRuntimeRiteId(
-        object riteController,
-        out int riteId
-    )
-    {
-        riteId = 0;
-
-        string[] directNames =
-        {
-            "riteId",
-            "rite_id",
-            "id",
-            "RiteId",
-            "RiteID"
-        };
-
-        if (
-            TryReadNumericMember(
-                riteController,
-                directNames,
-                out riteId
-            )
-        )
-        {
-            return true;
-        }
-
-        string[] nestedNames =
-        {
-            "rite",
-            "Rite",
-            "riteConfig",
-            "RiteConfig",
-            "config",
-            "Config",
-            "riteNode",
-            "RiteNode"
-        };
-
-        foreach (
-            string nestedName
-            in
-            nestedNames
-        )
-        {
-            object? nested =
-                TryReadObjectMember(
-                    riteController,
-                    nestedName
-                );
-
-            if (
-                nested == null
-            )
-            {
-                continue;
-            }
-
-            if (
-                TryReadNumericMember(
-                    nested,
-                    directNames,
-                    out riteId
-                )
-            )
-            {
-                return true;
-            }
-
-            foreach (
-                string innerName
-                in
-                nestedNames
-            )
-            {
-                object? inner =
-                    TryReadObjectMember(
-                        nested,
-                        innerName
-                    );
-
-                if (
-                    inner != null
-                    &&
-                    TryReadNumericMember(
-                        inner,
-                        directNames,
-                        out riteId
-                    )
-                )
-                {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
-    private static bool TryReadNumericMember(
-        object target,
-        IEnumerable<string> candidateNames,
-        out int value
-    )
-    {
-        value = 0;
-
-        Type type =
-            target.GetType();
-
-        var flags =
-            System.Reflection.BindingFlags.Instance
-            |
-            System.Reflection.BindingFlags.Public
-            |
-            System.Reflection.BindingFlags.NonPublic;
-
-        foreach (
-            string name
-            in
-            candidateNames
-        )
-        {
-            try
-            {
-                var property =
-                    type.GetProperty(
-                        name,
-                        flags
-                    );
-
-                if (
-                    property != null
-                    &&
-                    TryConvertPositiveInt(
-                        property.GetValue(
-                            target
-                        ),
-                        out value
-                    )
-                )
-                {
-                    return true;
-                }
-            }
-            catch
-            {
-            }
-
-            try
-            {
-                var field =
-                    type.GetField(
-                        name,
-                        flags
-                    );
-
-                if (
-                    field != null
-                    &&
-                    TryConvertPositiveInt(
-                        field.GetValue(
-                            target
-                        ),
-                        out value
-                    )
-                )
-                {
-                    return true;
-                }
-            }
-            catch
-            {
-            }
-        }
-
-        return false;
-    }
-
-    private static object? TryReadObjectMember(
-        object target,
-        string name
-    )
-    {
-        Type type =
-            target.GetType();
-
-        var flags =
-            System.Reflection.BindingFlags.Instance
-            |
-            System.Reflection.BindingFlags.Public
-            |
-            System.Reflection.BindingFlags.NonPublic;
-
-        try
-        {
-            var property =
-                type.GetProperty(
-                    name,
-                    flags
-                );
-
-            if (
-                property != null
-            )
-            {
-                return property.GetValue(
-                    target
-                );
-            }
-        }
-        catch
-        {
-        }
-
-        try
-        {
-            var field =
-                type.GetField(
-                    name,
-                    flags
-                );
-
-            if (
-                field != null
-            )
-            {
-                return field.GetValue(
-                    target
-                );
-            }
-        }
-        catch
-        {
-        }
-
-        return null;
-    }
-
-    private static bool TryConvertPositiveInt(
-        object? raw,
-        out int value
-    )
-    {
-        value = 0;
-
-        if (
-            raw == null
-        )
-        {
-            return false;
-        }
-
-        try
-        {
-            long parsed =
-                Convert.ToInt64(
-                    raw
-                );
-
-            if (
-                parsed > 0
-                &&
-                parsed <= int.MaxValue
-            )
-            {
-                value =
-                    (int)parsed;
-
-                return true;
-            }
-        }
-        catch
-        {
-        }
-
-        try
-        {
-            return
-                int.TryParse(
-                    raw.ToString(),
-                    out value
-                )
-                &&
-                value > 0;
-        }
-        catch
-        {
-            value = 0;
-            return false;
-        }
-    }
-
     private static void RefreshRuntimeContext(
         bool force
     )
     {
-        if (_db == null || !_loaded)
+        if (
+            _db == null
+            ||
+            !_loaded
+        )
         {
             return;
         }
 
-        DateTime now = DateTime.UtcNow;
+        DateTime now =
+            DateTime.UtcNow;
 
-        if (!force && now < _nextRuntimeRefreshUtc)
+        if (
+            !force
+            &&
+            now
+            <
+            _nextRuntimeRefreshUtc
+        )
         {
             return;
         }
 
-        _nextRuntimeRefreshUtc = now.AddMilliseconds(700);
+        _nextRuntimeRefreshUtc =
+            now.AddMilliseconds(
+                700
+            );
 
         try
         {
-            var gc = GameController.Inst;
+            var gc =
+                GameController.Inst;
 
-            if (gc == null)
+            if (
+                gc == null
+                ||
+                gc.EventTrigger == null
+            )
             {
                 _runtimeNodes.Clear();
                 _activeEventIds.Clear();
-                _runtimeStatus = "当前不在可读取的游戏局内。";
+
+                _runtimeStatus =
+                    "当前不在可读取的游戏局内。";
+
                 return;
             }
 
-            // GetActiveEvents() 是大量后台监听事件，并不等于玩家正在进行的剧情。
-            // GetViewRites() 对应当前地图/桌面真正显示出来的仪式。
-            var viewRites = gc.GetViewRites();
-            var currentRiteIds = new List<int>();
+            var activeEvents =
+                gc.EventTrigger.GetActiveEvents();
 
-            if (viewRites != null)
+            var newActiveIds =
+                new List<int>();
+
+            if (activeEvents != null)
             {
-                foreach (var riteController in viewRites)
+                foreach (
+                    var evt
+                    in
+                    activeEvents
+                )
                 {
                     try
                     {
-                        if (
-                            riteController == null
-                        )
+                        var idObject =
+                            evt.id;
+
+                        if (idObject == null)
                         {
                             continue;
                         }
 
+                        int eventId =
+                            Convert.ToInt32(
+                                idObject.ToString()
+                            );
+
                         if (
-                            TryGetRuntimeRiteId(
-                                riteController,
-                                out int riteId
-                            )
-                            &&
-                            riteId > 0
+                            eventId > 0
                         )
                         {
-                            currentRiteIds.Add(
-                                riteId
+                            newActiveIds.Add(
+                                eventId
                             );
                         }
                     }
@@ -893,10 +628,20 @@ public sealed class GuideOverlay : MonoBehaviour
                 }
             }
 
-            currentRiteIds = currentRiteIds.Distinct().ToList();
+            newActiveIds =
+                newActiveIds
+                    .Distinct()
+                    .ToList();
 
             string newSignature =
-                string.Join(",", currentRiteIds.OrderBy(x => x));
+                string.Join(
+                    ",",
+                    newActiveIds
+                        .OrderBy(
+                            x =>
+                                x
+                        )
+                );
 
             bool changed =
                 !string.Equals(
@@ -905,19 +650,35 @@ public sealed class GuideOverlay : MonoBehaviour
                     StringComparison.Ordinal
                 );
 
-            _activeSignature = newSignature;
+            _activeSignature =
+                newSignature;
+
             _activeEventIds.Clear();
 
-            foreach (int riteId in currentRiteIds)
+            foreach (
+                int eventId
+                in
+                newActiveIds
+            )
             {
-                _activeEventIds.Add(riteId);
+                _activeEventIds.Add(
+                    eventId
+                );
             }
 
             _runtimeNodes.Clear();
 
-            foreach (int riteId in currentRiteIds)
+            // 第一层：游戏当前真正处于活跃状态的事件。
+            foreach (
+                int eventId
+                in
+                newActiveIds
+            )
             {
-                var node = _db.Get(riteId);
+                var node =
+                    _db.Get(
+                        eventId
+                    );
 
                 if (node == null)
                 {
@@ -927,108 +688,149 @@ public sealed class GuideOverlay : MonoBehaviour
                 _runtimeNodes.Add(
                     new RuntimeNodeItem
                     {
-                        Node = node,
-                        Prefix = "● 当前可处理",
-                        IsActive = true
+                        Node =
+                            node,
+
+                        Prefix =
+                            "● 正在进行",
+
+                        IsActive =
+                            true
                     }
                 );
             }
 
-            var seen = new HashSet<int>(currentRiteIds);
-            var seenNames =
-                new HashSet<string>(
-                    StringComparer.Ordinal
+            // 第二层：从当前事件能够直接走到的下一步。
+            var seen =
+                new HashSet<int>(
+                    newActiveIds
                 );
 
-            foreach (var item in _runtimeNodes)
+            foreach (
+                int eventId
+                in
+                newActiveIds
+            )
             {
-                seenNames.Add(
-                    item.Node.Kind
-                    +
-                    ":"
-                    +
-                    item.Node.Name
-                );
-            }
-
-            foreach (int riteId in currentRiteIds)
-            {
-                var current = _db.Get(riteId);
+                var current =
+                    _db.Get(
+                        eventId
+                    );
 
                 if (current == null)
                 {
                     continue;
                 }
 
-                foreach (var link in current.Links)
+                foreach (
+                    var link
+                    in
+                    current.Links
+                )
                 {
                     if (
-                        link == null
-                        ||
-                        seen.Contains(link.TargetId)
+                        seen.Contains(
+                            link.TargetId
+                        )
                     )
                     {
                         continue;
                     }
 
-                    var target = _db.Get(link.TargetId);
+                    var target =
+                        _db.Get(
+                            link.TargetId
+                        );
 
                     if (target == null)
                     {
                         continue;
                     }
 
-                    string nameKey =
+                    seen.Add(
+                        link.TargetId
+                    );
+
+                    string targetNameKey =
                         target.Kind
                         +
                         ":"
                         +
                         target.Name;
 
-                    if (seenNames.Contains(nameKey))
+                    bool duplicateTargetName =
+                        _runtimeNodes.Any(
+                            item =>
+                                (
+                                    item.Node.Kind
+                                    +
+                                    ":"
+                                    +
+                                    item.Node.Name
+                                )
+                                ==
+                                targetNameKey
+                        );
+
+                    if (
+                        duplicateTargetName
+                    )
                     {
                         continue;
                     }
 
-                    seen.Add(link.TargetId);
-                    seenNames.Add(nameKey);
-
                     _runtimeNodes.Add(
                         new RuntimeNodeItem
                         {
-                            Node = target,
-                            Prefix = "→ 直接后续",
-                            IsActive = false
+                            Node =
+                                target,
+
+                            Prefix =
+                                "→ 可能后续",
+
+                            IsActive =
+                                false
                         }
                     );
                 }
             }
 
             _runtimeStatus =
-                currentRiteIds.Count > 0
+                newActiveIds.Count > 0
                     ?
-                    $"当前有 {currentRiteIds.Count} 个地图/桌面仪式；这里只显示它们和直接后续。"
+                    $"当前有 {newActiveIds.Count} 个活跃事件；列表会自动刷新。"
                     :
-                    "当前没有检测到地图/桌面上的可见仪式。";
+                    "当前没有检测到活跃事件。";
 
             if (
                 _autoFollow
                 &&
-                currentRiteIds.Count > 0
+                newActiveIds.Count > 0
                 &&
                 (
                     changed
                     ||
-                    !_activeEventIds.Contains(_selectedId)
+                    !_activeEventIds.Contains(
+                        _selectedId
+                    )
                 )
             )
             {
-                int first = currentRiteIds[0];
+                int first =
+                    newActiveIds[0];
 
-                if (_db.Get(first) != null)
+                if (
+                    _db.Get(first)
+                    !=
+                    null
+                )
                 {
-                    _selectedId = first;
-                    _detailScroll = Vector2.zero;
+                    _selectedId =
+                        first;
+
+                    _detailScroll =
+                        Vector2.zero;
+
                     _history.Clear();
                 }
             }
@@ -1036,7 +838,7 @@ public sealed class GuideOverlay : MonoBehaviour
         catch (Exception ex)
         {
             _runtimeStatus =
-                "读取当前地图/桌面仪式失败，已保留手动搜索模式。";
+                "读取当前剧情失败，已保留手动搜索模式。";
 
             Log.LogWarning(
                 "RefreshRuntimeContext failed: "
@@ -1045,6 +847,10 @@ public sealed class GuideOverlay : MonoBehaviour
             );
         }
     }
+
+    // ============================================================
+    // UI
+    // ============================================================
 
     private static void DrawPanel()
     {
@@ -1097,7 +903,7 @@ public sealed class GuideOverlay : MonoBehaviour
                 330,
                 22
             ),
-            "v0.4.78 · 运行时ID兼容",
+            "v0.4.79 · 稳定运行时+语义修复",
             _small
         );
 
