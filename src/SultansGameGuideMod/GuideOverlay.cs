@@ -20,7 +20,17 @@ public sealed class GuideOverlay : MonoBehaviour
     {
         public GuideNode Node { get; init; } = null!;
         public string Prefix { get; init; } = "";
-        public bool IsActive { get; init; }
+        public int RuntimeUid { get; init; }
+        public bool IsCurrent { get; init; }
+        public bool IsStarted { get; init; }
+    }
+
+    private sealed class RuntimeRiteState
+    {
+        public int Id { get; init; }
+        public int Uid { get; init; }
+        public bool IsStarted { get; init; }
+        public bool IsCurrent { get; init; }
     }
 
     private static GuideDatabase? _db;
@@ -31,7 +41,7 @@ public sealed class GuideOverlay : MonoBehaviour
 
     private static string _loadMessage = "正在读取游戏攻略数据……";
 
-    // 左栏：0 = 当前剧情；1 = 全部搜索
+    // 左栏：0 = 当前地图仪式；1 = 全部搜索
     private static int _leftMode = 0;
     private static bool _autoFollow = true;
 
@@ -40,17 +50,20 @@ public sealed class GuideOverlay : MonoBehaviour
     private static List<GuideNode> _results = new();
 
     private static readonly List<RuntimeNodeItem> _runtimeNodes = new();
-    private static readonly HashSet<int> _activeEventIds = new();
-    private static string _runtimeStatus = "正在连接当前游戏状态……";
+    private static readonly HashSet<int> _runtimeRiteIds = new();
+    private static readonly HashSet<int> _startedRiteIds = new();
+    private static string _runtimeStatus = "正在读取地图仪式……";
     private static DateTime _nextRuntimeRefreshUtc = DateTime.MinValue;
-    private static string _activeSignature = "";
+    private static string _runtimeSignature = "";
+    private static int _currentRiteId = 0;
+    private static int _currentRiteUid = 0;
 
     private static int _resultPage = 0;
     private static int _selectedId = 0;
 
     private static readonly Stack<int> _history = new();
 
-    // 左侧“当前剧情”列表滚动位置
+    // 左侧“当前仪式”列表滚动位置
     private static Vector2 _runtimeScroll = Vector2.zero;
 
     // 右侧详情区的滚动位置
@@ -533,7 +546,7 @@ public sealed class GuideOverlay : MonoBehaviour
     }
 
     // ============================================================
-    // 运行时：读取当前活跃事件并自动构造“当前剧情”左栏
+    // 运行时：扫描当前场景中的真实 RiteController 并构造“当前仪式”左栏
     // ============================================================
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -576,12 +589,17 @@ public sealed class GuideOverlay : MonoBehaviour
 
             if (
                 gc == null
-                ||
-                gc.EventTrigger == null
             )
             {
                 _runtimeNodes.Clear();
-                _activeEventIds.Clear();
+                _runtimeRiteIds.Clear();
+                _startedRiteIds.Clear();
+
+                _currentRiteId =
+                    0;
+
+                _currentRiteUid =
+                    0;
 
                 _runtimeStatus =
                     "当前不在可读取的游戏局内。";
@@ -589,106 +607,283 @@ public sealed class GuideOverlay : MonoBehaviour
                 return;
             }
 
-            var activeEvents =
-                gc.EventTrigger.GetActiveEvents();
+            int currentRiteId =
+                0;
 
-            var newActiveIds =
-                new List<int>();
+            int currentRiteUid =
+                0;
 
-            if (activeEvents != null)
+            try
             {
-                foreach (
-                    var evt
-                    in
-                    activeEvents
+                var panel =
+                    gc.ritePanel;
+
+                if (
+                    panel != null
+                    &&
+                    panel.isActiveAndEnabled
+                    &&
+                    panel.tmpRite != null
                 )
                 {
-                    try
+                    currentRiteId =
+                        panel.tmpRite.id;
+
+                    currentRiteUid =
+                        panel.tmpRite.uid;
+                }
+            }
+            catch
+            {
+                currentRiteId =
+                    0;
+
+                currentRiteUid =
+                    0;
+            }
+
+            var states =
+                new List<RuntimeRiteState>();
+
+            var seenInstances =
+                new HashSet<string>();
+
+            var controllers =
+                Resources.FindObjectsOfTypeAll<RiteController>();
+
+            foreach (
+                var controller
+                in
+                controllers
+            )
+            {
+                try
+                {
+                    if (
+                        controller == null
+                    )
                     {
-                        var idObject =
-                            evt.id;
+                        continue;
+                    }
 
-                        if (idObject == null)
-                        {
-                            continue;
-                        }
+                    var go =
+                        controller.gameObject;
 
-                        int eventId =
-                            Convert.ToInt32(
-                                idObject.ToString()
-                            );
+                    if (
+                        go == null
+                        ||
+                        !go.scene.IsValid()
+                        ||
+                        !go.activeInHierarchy
+                        ||
+                        !controller.isActiveAndEnabled
+                    )
+                    {
+                        continue;
+                    }
 
-                        if (
-                            eventId > 0
+                    var rite =
+                        controller.rite;
+
+                    if (
+                        rite == null
+                        ||
+                        rite.id <= 0
+                    )
+                    {
+                        continue;
+                    }
+
+                    string instanceKey =
+                        rite.uid > 0
+                            ?
+                            "uid:"
+                            +
+                            rite.uid
+                            :
+                            "instance:"
+                            +
+                            controller.GetInstanceID();
+
+                    if (
+                        !seenInstances.Add(
+                            instanceKey
                         )
-                        {
-                            newActiveIds.Add(
-                                eventId
-                            );
-                        }
-                    }
-                    catch
+                    )
                     {
+                        continue;
                     }
+
+                    bool isCurrent =
+                        currentRiteId > 0
+                        &&
+                        rite.id
+                        ==
+                        currentRiteId
+                        &&
+                        (
+                            currentRiteUid <= 0
+                            ||
+                            rite.uid
+                            ==
+                            currentRiteUid
+                        );
+
+                    states.Add(
+                        new RuntimeRiteState
+                        {
+                            Id =
+                                rite.id,
+
+                            Uid =
+                                rite.uid,
+
+                            IsStarted =
+                                rite.start,
+
+                            IsCurrent =
+                                isCurrent
+                        }
+                    );
+                }
+                catch
+                {
                 }
             }
 
-            newActiveIds =
-                newActiveIds
-                    .Distinct()
+            states =
+                states
+                    .OrderByDescending(
+                        x =>
+                            x.IsCurrent
+                    )
+                    .ThenBy(
+                        x =>
+                            x.IsStarted
+                    )
+                    .ThenBy(
+                        x =>
+                            x.Id
+                    )
+                    .ThenBy(
+                        x =>
+                            x.Uid
+                    )
                     .ToList();
 
             string newSignature =
                 string.Join(
-                    ",",
-                    newActiveIds
-                        .OrderBy(
-                            x =>
-                                x
-                        )
+                    "|",
+                    states.Select(
+                        x =>
+                            x.Id
+                            +
+                            ":"
+                            +
+                            x.Uid
+                            +
+                            ":"
+                            +
+                            (
+                                x.IsStarted
+                                    ?
+                                    "1"
+                                    :
+                                    "0"
+                            )
+                            +
+                            ":"
+                            +
+                            (
+                                x.IsCurrent
+                                    ?
+                                    "1"
+                                    :
+                                    "0"
+                            )
+                    )
                 );
 
             bool changed =
                 !string.Equals(
-                    _activeSignature,
+                    _runtimeSignature,
                     newSignature,
                     StringComparison.Ordinal
                 );
 
-            _activeSignature =
+            _runtimeSignature =
                 newSignature;
 
-            _activeEventIds.Clear();
+            _currentRiteId =
+                currentRiteId;
 
-            foreach (
-                int eventId
-                in
-                newActiveIds
-            )
-            {
-                _activeEventIds.Add(
-                    eventId
-                );
-            }
+            _currentRiteUid =
+                currentRiteUid;
 
             _runtimeNodes.Clear();
+            _runtimeRiteIds.Clear();
+            _startedRiteIds.Clear();
 
-            // 第一层：游戏当前真正处于活跃状态的事件。
+            int matchedCount =
+                0;
+
+            int playableCount =
+                0;
+
+            int startedCount =
+                0;
+
             foreach (
-                int eventId
+                var state
                 in
-                newActiveIds
+                states
             )
             {
-                var node =
-                    _db.Get(
-                        eventId
+                _runtimeRiteIds.Add(
+                    state.Id
+                );
+
+                if (
+                    state.IsStarted
+                )
+                {
+                    _startedRiteIds.Add(
+                        state.Id
                     );
 
-                if (node == null)
+                    startedCount++;
+                }
+                else
+                {
+                    playableCount++;
+                }
+
+                var node =
+                    _db.Get(
+                        state.Id
+                    );
+
+                if (
+                    node == null
+                )
                 {
                     continue;
                 }
+
+                matchedCount++;
+
+                string prefix =
+                    state.IsCurrent
+                        ?
+                        "◆ 正在操作"
+                        :
+                        (
+                            state.IsStarted
+                                ?
+                                "● 已开始"
+                                :
+                                "○ 可操作"
+                        );
 
                 _runtimeNodes.Add(
                     new RuntimeNodeItem
@@ -697,141 +892,124 @@ public sealed class GuideOverlay : MonoBehaviour
                             node,
 
                         Prefix =
-                            "● 正在进行",
+                            prefix,
 
-                        IsActive =
-                            true
+                        RuntimeUid =
+                            state.Uid,
+
+                        IsCurrent =
+                            state.IsCurrent,
+
+                        IsStarted =
+                            state.IsStarted
                     }
                 );
             }
 
-            // 第二层：从当前事件能够直接走到的下一步。
-            var seen =
-                new HashSet<int>(
-                    newActiveIds
-                );
-
-            foreach (
-                int eventId
-                in
-                newActiveIds
+            if (
+                states.Count == 0
             )
             {
-                var current =
-                    _db.Get(
-                        eventId
-                    );
+                _runtimeStatus =
+                    "当前地图没有检测到仪式。";
+            }
+            else
+            {
+                _runtimeStatus =
+                    $"地图仪式 {states.Count} 个：可操作 {playableCount} 个，已开始 {startedCount} 个。";
 
-                if (current == null)
-                {
-                    continue;
-                }
-
-                foreach (
-                    var link
-                    in
-                    current.Links
+                if (
+                    matchedCount
+                    <
+                    states.Count
                 )
                 {
-                    if (
-                        seen.Contains(
-                            link.TargetId
-                        )
-                    )
-                    {
-                        continue;
-                    }
-
-                    var target =
-                        _db.Get(
-                            link.TargetId
-                        );
-
-                    if (target == null)
-                    {
-                        continue;
-                    }
-
-                    seen.Add(
-                        link.TargetId
-                    );
-
-                    string targetNameKey =
-                        target.Kind
-                        +
-                        ":"
-                        +
-                        target.Name;
-
-                    bool duplicateTargetName =
-                        _runtimeNodes.Any(
-                            item =>
-                                (
-                                    item.Node.Kind
-                                    +
-                                    ":"
-                                    +
-                                    item.Node.Name
-                                )
-                                ==
-                                targetNameKey
-                        );
-
-                    if (
-                        duplicateTargetName
-                    )
-                    {
-                        continue;
-                    }
-
-                    _runtimeNodes.Add(
-                        new RuntimeNodeItem
-                        {
-                            Node =
-                                target,
-
-                            Prefix =
-                                "→ 可能后续",
-
-                            IsActive =
-                                false
-                        }
-                    );
+                    _runtimeStatus +=
+                        $" 其中 {states.Count - matchedCount} 个暂未匹配到攻略配置。";
                 }
             }
-
-            _runtimeStatus =
-                newActiveIds.Count > 0
-                    ?
-                    $"当前有 {newActiveIds.Count} 个活跃事件；列表会自动刷新。"
-                    :
-                    "当前没有检测到活跃事件。";
 
             if (
                 _autoFollow
                 &&
-                newActiveIds.Count > 0
-                &&
-                (
-                    changed
-                    ||
-                    !_activeEventIds.Contains(
-                        _selectedId
-                    )
-                )
+                states.Count > 0
             )
             {
-                int first =
-                    newActiveIds[0];
+                int targetId =
+                    0;
 
                 if (
-                    _db.Get(first)
+                    currentRiteId > 0
+                    &&
+                    _db.Get(
+                        currentRiteId
+                    )
                     !=
                     null
                 )
                 {
+                    targetId =
+                        currentRiteId;
+                }
+                else if (
+                    changed
+                    ||
+                    !_runtimeRiteIds.Contains(
+                        _selectedId
+                    )
+                )
+                {
+                    var firstPlayable =
+                        states.FirstOrDefault(
+                            x =>
+                                !x.IsStarted
+                                &&
+                                _db.Get(
+                                    x.Id
+                                )
+                                !=
+                                null
+                        );
+
+                    if (
+                        firstPlayable != null
+                    )
+                    {
+                        targetId =
+                            firstPlayable.Id;
+                    }
+                    else
+                    {
+                        var firstMatched =
+                            states.FirstOrDefault(
+                                x =>
+                                    _db.Get(
+                                        x.Id
+                                    )
+                                    !=
+                                    null
+                            );
+
+                        if (
+                            firstMatched != null
+                        )
+                        {
+                            targetId =
+                                firstMatched.Id;
+                        }
+                    }
+                }
+
+                if (
+                    targetId > 0
+                    &&
+                    targetId
+                    !=
+                    _selectedId
+                )
+                {
                     _selectedId =
-                        first;
+                        targetId;
 
                     _detailScroll =
                         Vector2.zero;
@@ -840,10 +1018,12 @@ public sealed class GuideOverlay : MonoBehaviour
                 }
             }
         }
-        catch (Exception ex)
+        catch (
+            Exception ex
+        )
         {
             _runtimeStatus =
-                "读取当前剧情失败，已保留手动搜索模式。";
+                "读取地图仪式失败，已保留手动搜索模式。";
 
             Log.LogWarning(
                 "RefreshRuntimeContext failed: "
@@ -908,7 +1088,7 @@ public sealed class GuideOverlay : MonoBehaviour
                 330,
                 22
             ),
-            "v0.4.81 · 选中高亮",
+            "v0.4.86 · 正式版",
             _small
         );
 
@@ -968,7 +1148,7 @@ public sealed class GuideOverlay : MonoBehaviour
                     108,
                     29
                 ),
-                "当前剧情",
+                "当前仪式",
                 _leftMode == 0
                     ?
                     _activeButtonStyle
@@ -1277,7 +1457,7 @@ public sealed class GuideOverlay : MonoBehaviour
                     w,
                     90
                 ),
-                "当前没有检测到活跃剧情。\n进入一局游戏后，这里会自动显示已激活事件和相关后续。",
+                "当前没有检测到地图仪式。\n进入一局游戏后，这里会自动显示地图上真实存在的仪式。",
                 _body
             );
 
@@ -1355,7 +1535,9 @@ public sealed class GuideOverlay : MonoBehaviour
                     _selectedButtonStyle!
                     :
                     (
-                        item.IsActive
+                        item.IsCurrent
+                        ||
+                        !item.IsStarted
                             ?
                             _activeButtonStyle!
                             :
@@ -1783,13 +1965,29 @@ public sealed class GuideOverlay : MonoBehaviour
         }
 
         string stateTag =
-            _activeEventIds.Contains(
-                node.Id
-            )
+            node.Id
+            ==
+            _currentRiteId
                 ?
-                "【当前正在进行】 "
+                "【正在操作】 "
                 :
-                "";
+                (
+                    _runtimeRiteIds.Contains(
+                        node.Id
+                    )
+                        ?
+                        (
+                            _startedRiteIds.Contains(
+                                node.Id
+                            )
+                                ?
+                                "【地图·已开始】 "
+                                :
+                                "【地图·可操作】 "
+                        )
+                        :
+                        ""
+                );
 
         GUI.Label(
             new Rect(
@@ -2394,7 +2592,7 @@ public sealed class GuideOverlay : MonoBehaviour
                     1
                 );
 
-            // 选中项使用明显的暖金棕色，与“当前已激活”的蓝色区分。
+            // 选中项使用明显的暖金棕色，与“当前可操作”的蓝色区分。
             _selectedTex.SetPixel(
                 0,
                 0,
