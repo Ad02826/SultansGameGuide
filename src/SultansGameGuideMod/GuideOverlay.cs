@@ -109,11 +109,19 @@ public sealed class GuideOverlay : MonoBehaviour
     private static GUIStyle? _wrapButton;
     private static GUIStyle? _boxStyle;
     private static GUIStyle? _softBoxStyle;
+    private static GUIStyle? _triggerTitleStyle;
+    private static GUIStyle? _statusTitleStyle;
+    private static GUIStyle? _stateIconSymbolStyle;
     private static GUIStyle? _activeButtonStyle;
     private static GUIStyle? _selectedButtonStyle;
 
     private static Texture2D? _panelTex;
     private static Texture2D? _softTex;
+    private static Texture2D? _triggerGroupTex;
+    private static Texture2D? _triggerBorderTex;
+    private static Texture2D? _stateMetCircleTex;
+    private static Texture2D? _stateUnmetCircleTex;
+    private static Texture2D? _stateUnknownCircleTex;
     private static Texture2D? _activeTex;
     private static Texture2D? _selectedTex;
 
@@ -1108,7 +1116,7 @@ public sealed class GuideOverlay : MonoBehaviour
                 330,
                 22
             ),
-            "v0.4.93 · 触发机制自然语言·BuildFix",
+            "v0.4.95 · 圆形状态图标",
             _small
         );
 
@@ -2019,11 +2027,11 @@ public sealed class GuideOverlay : MonoBehaviour
                 24
             ),
             "触发机制",
-            _subTitle
+            _triggerTitleStyle
         );
 
         cy +=
-            27f;
+            32f;
 
         // 用一个完整的大框把当前节点的所有触发分支包起来。
         // 分支仍然保持默认折叠；展开后的条件详情继续显示在框内。
@@ -2035,15 +2043,13 @@ public sealed class GuideOverlay : MonoBehaviour
         float triggerGroupY =
             cy;
 
-        GUI.Box(
+        DrawTriggerGroupFrame(
             new Rect(
                 localX,
                 triggerGroupY,
                 localW,
                 triggerGroupHeight
-            ),
-            "",
-            _softBoxStyle
+            )
         );
 
         float triggerInnerX =
@@ -2124,7 +2130,7 @@ public sealed class GuideOverlay : MonoBehaviour
                 if (
                     GUI.Button(
                         buttonRect,
-                        $"{arrow} {branch.Name}",
+                        $"{arrow}      {branch.Name}",
                         _wrapButton
                     )
                 )
@@ -2145,16 +2151,13 @@ public sealed class GuideOverlay : MonoBehaviour
                     }
                 }
 
+                // 分支总状态放到展开箭头之后、分支名称之前。
                 DrawConditionStateIcon(
                     new Rect(
-                        triggerInnerX
-                        +
-                        triggerInnerW
-                        -
-                        34f,
+                        triggerInnerX + 24f,
                         cy + 7f,
-                        24f,
-                        24f
+                        22f,
+                        22f
                     ),
                     state
                 );
@@ -2372,12 +2375,55 @@ public sealed class GuideOverlay : MonoBehaviour
         GUI.EndScrollView();
     }
 
+    private static void DrawTriggerGroupFrame(
+        Rect rect
+    )
+    {
+        // 右侧详情面板本身已经使用 _softTex；
+        // 如果这里只画同样的 _softTex，视觉上等于“没有框”。
+        // 所以这里显式画一层亮边框，再内缩画独立底色。
+        if (
+            _triggerBorderTex != null
+        )
+        {
+            GUI.DrawTexture(
+                rect,
+                _triggerBorderTex,
+                ScaleMode.StretchToFill,
+                false
+            );
+        }
+
+        if (
+            _triggerGroupTex != null
+        )
+        {
+            GUI.DrawTexture(
+                new Rect(
+                    rect.x + 2f,
+                    rect.y + 2f,
+                    Math.Max(
+                        0f,
+                        rect.width - 4f
+                    ),
+                    Math.Max(
+                        0f,
+                        rect.height - 4f
+                    )
+                ),
+                _triggerGroupTex,
+                ScaleMode.StretchToFill,
+                false
+            );
+        }
+    }
+
     private static float EstimateTriggerMechanismHeight(
         GuideNode node
     )
     {
         return
-            27f
+            32f
             +
             EstimateTriggerBranchGroupHeight(
                 node
@@ -2477,7 +2523,7 @@ public sealed class GuideOverlay : MonoBehaviour
         )
         {
             height +=
-                26f;
+                24f;
 
             foreach (
                 var row
@@ -2595,6 +2641,7 @@ public sealed class GuideOverlay : MonoBehaviour
             +
             8f;
 
+        // 实时条件状态仍保留，但不再拆成“检查阶段 / 条件 / 满足后”。
         if (
             rows.Count > 0
         )
@@ -2603,15 +2650,27 @@ public sealed class GuideOverlay : MonoBehaviour
                 new Rect(
                     innerX,
                     cy,
-                    innerW,
+                    72f,
                     22f
                 ),
                 "当前状态",
-                _subTitle
+                _statusTitleStyle
+            );
+
+            DrawConditionStateIcon(
+                new Rect(
+                    innerX + 66f,
+                    cy + 1f,
+                    20f,
+                    20f
+                ),
+                GetConditionRowsOverallState(
+                    rows
+                )
             );
 
             cy +=
-                24f;
+                22f;
 
             foreach (
                 var row
@@ -2703,6 +2762,7 @@ public sealed class GuideOverlay : MonoBehaviour
                 :
                 branch.Effect.Trim();
 
+        // 展示层只做轻量去重，不改变数据库里的原始触发关系。
         effect =
             effect.Replace(
                 "满足后生成",
@@ -2730,7 +2790,7 @@ public sealed class GuideOverlay : MonoBehaviour
                 :
                 "事件";
 
-        string sentence =
+        string sourceSentence =
             branch.SourceId > 0
                 ?
                 $"{sourceKind}「{source}」{effect}"
@@ -2744,7 +2804,7 @@ public sealed class GuideOverlay : MonoBehaviour
         )
         {
             return
-                sentence;
+                sourceSentence;
         }
 
         return
@@ -2752,7 +2812,7 @@ public sealed class GuideOverlay : MonoBehaviour
             +
             "\n"
             +
-            sentence;
+            sourceSentence;
     }
 
     private static string BuildTriggerBranchKey(
@@ -2777,41 +2837,77 @@ public sealed class GuideOverlay : MonoBehaviour
             branch.Name;
     }
 
+    private static ConditionRuntimeState GetConditionRowsOverallState(
+        List<ConditionCheckRow> rows
+    )
+    {
+        bool hasUnknown =
+            false;
+
+        foreach (
+            var row
+            in
+            rows
+        )
+        {
+            if (
+                row.State
+                ==
+                ConditionRuntimeState.Unmet
+            )
+            {
+                return
+                    ConditionRuntimeState.Unmet;
+            }
+
+            if (
+                row.State
+                ==
+                ConditionRuntimeState.Unknown
+            )
+            {
+                hasUnknown =
+                    true;
+            }
+        }
+
+        return
+            hasUnknown
+                ?
+                ConditionRuntimeState.Unknown
+                :
+                ConditionRuntimeState.Met;
+    }
+
     private static void DrawConditionStateIcon(
         Rect rect,
         ConditionRuntimeState state
     )
     {
-        var old =
-            GUI.contentColor;
-
-        GUI.contentColor =
+        Texture2D? circle =
             state switch
             {
                 ConditionRuntimeState.Met =>
-                    new Color(
-                        0.35f,
-                        0.90f,
-                        0.42f,
-                        1f
-                    ),
+                    _stateMetCircleTex,
 
                 ConditionRuntimeState.Unmet =>
-                    new Color(
-                        1.00f,
-                        0.35f,
-                        0.35f,
-                        1f
-                    ),
+                    _stateUnmetCircleTex,
 
                 _ =>
-                    new Color(
-                        0.72f,
-                        0.76f,
-                        0.82f,
-                        1f
-                    )
+                    _stateUnknownCircleTex
             };
+
+        if (
+            circle != null
+        )
+        {
+            GUI.DrawTexture(
+                rect,
+                circle,
+                ScaleMode.StretchToFill,
+                true
+            );
+        }
 
         string symbol =
             state switch
@@ -2820,7 +2916,7 @@ public sealed class GuideOverlay : MonoBehaviour
                     "✓",
 
                 ConditionRuntimeState.Unmet =>
-                    "✗",
+                    "×",
 
                 _ =>
                     "?"
@@ -2829,11 +2925,8 @@ public sealed class GuideOverlay : MonoBehaviour
         GUI.Label(
             rect,
             symbol,
-            _body
+            _stateIconSymbolStyle
         );
-
-        GUI.contentColor =
-            old;
     }
 
     private static ConditionRuntimeState EvaluateTriggerBranch(
@@ -2848,17 +2941,39 @@ public sealed class GuideOverlay : MonoBehaviour
             branch.IsFallback
         )
         {
-            rows.Add(
-                new ConditionCheckRow
-                {
-                    State =
-                        ConditionRuntimeState.Unknown,
-                    Text =
-                        branch.HumanCondition,
-                    Detail =
-                        "当前无法从普通事件触发链中可靠判断。"
-                }
-            );
+            string fallbackCondition =
+                !string.IsNullOrWhiteSpace(
+                    branch.RawCondition
+                )
+                    ?
+                    branch.RawCondition.Trim()
+                    :
+                    branch.HumanCondition;
+
+            if (
+                !string.IsNullOrWhiteSpace(
+                    fallbackCondition
+                )
+                &&
+                !IsNoExtraConditionText(
+                    fallbackCondition
+                )
+            )
+            {
+                rows.Add(
+                    new ConditionCheckRow
+                    {
+                        State =
+                            ConditionRuntimeState.Unknown,
+                        Text =
+                            "待适配条件",
+                        Detail =
+                            "原始条件："
+                            +
+                            fallbackCondition
+                    }
+                );
+            }
 
             return
                 ConditionRuntimeState.Unknown;
@@ -2868,20 +2983,14 @@ public sealed class GuideOverlay : MonoBehaviour
             string.IsNullOrWhiteSpace(
                 branch.RawCondition
             )
+            ||
+            IsNoExtraConditionText(
+                branch.HumanCondition
+            )
         )
         {
-            rows.Add(
-                new ConditionCheckRow
-                {
-                    State =
-                        ConditionRuntimeState.Met,
-                    Text =
-                        "没有额外条件",
-                    Detail =
-                        "该分支本身没有配置额外 condition。"
-                }
-            );
-
+            // 没有额外要求就是“无条件分支”：
+            // 分支本身显示绿色 ✓ 即可，不再展开“当前状态 / 没有额外要求”。
             return
                 ConditionRuntimeState.Met;
         }
@@ -2902,21 +3011,77 @@ public sealed class GuideOverlay : MonoBehaviour
         }
         catch
         {
-            rows.Add(
-                new ConditionCheckRow
-                {
-                    State =
-                        ConditionRuntimeState.Unknown,
-                    Text =
-                        branch.HumanCondition,
-                    Detail =
-                        "当前无法可靠解析这组条件。"
-                }
-            );
+            string raw =
+                string.IsNullOrWhiteSpace(
+                    branch.RawCondition
+                )
+                    ?
+                    branch.HumanCondition
+                    :
+                    branch.RawCondition.Trim();
+
+            if (
+                !string.IsNullOrWhiteSpace(
+                    raw
+                )
+                &&
+                !IsNoExtraConditionText(
+                    raw
+                )
+            )
+            {
+                rows.Add(
+                    new ConditionCheckRow
+                    {
+                        State =
+                            ConditionRuntimeState.Unknown,
+                        Text =
+                            "待适配条件",
+                        Detail =
+                            "原始条件："
+                            +
+                            raw
+                    }
+                );
+            }
 
             return
                 ConditionRuntimeState.Unknown;
         }
+    }
+
+    private static bool IsNoExtraConditionText(
+        string? text
+    )
+    {
+        if (
+            string.IsNullOrWhiteSpace(
+                text
+            )
+        )
+        {
+            return
+                true;
+        }
+
+        string normalized =
+            text
+                .Trim()
+                .TrimEnd(
+                    '。',
+                    '.'
+                );
+
+        return
+            normalized.Equals(
+                "没有额外要求",
+                StringComparison.Ordinal
+            )
+            ||
+            normalized.Equals(
+                "没有额外条件",
+                StringComparison.Ordinal
+            );
     }
 
     private static ConditionRuntimeState EvaluateConditionElement(
@@ -3319,6 +3484,13 @@ public sealed class GuideOverlay : MonoBehaviour
                     ConditionRuntimeState.Unmet;
         }
 
+        string rawAtom =
+            key
+            +
+            " = "
+            +
+            value.GetRawText();
+
         rows.Add(
             new ConditionCheckRow
             {
@@ -3329,11 +3501,13 @@ public sealed class GuideOverlay : MonoBehaviour
                         human
                     )
                         ?
-                        "存在一个当前尚未支持实时读取的条件。"
+                        "待适配条件"
                         :
                         human,
                 Detail =
-                    "当前暂时无法可靠读取这个条件，所以不显示错误的对勾或叉号。"
+                    "原始条件："
+                    +
+                    rawAtom
             }
         );
 
@@ -3716,6 +3890,89 @@ public sealed class GuideOverlay : MonoBehaviour
             );
     }
 
+    private static Texture2D CreateStateCircleTexture(
+        Color fill
+    )
+    {
+        const int size =
+            32;
+
+        var tex =
+            new Texture2D(
+                size,
+                size
+            );
+
+        float center =
+            (size - 1)
+            *
+            0.5f;
+
+        float radius =
+            center
+            -
+            1f;
+
+        for (
+            int y = 0;
+            y < size;
+            y++
+        )
+        {
+            for (
+                int x = 0;
+                x < size;
+                x++
+            )
+            {
+                float dx =
+                    x
+                    -
+                    center;
+
+                float dy =
+                    y
+                    -
+                    center;
+
+                float distance =
+                    Mathf.Sqrt(
+                        dx * dx
+                        +
+                        dy * dy
+                    );
+
+                // 1px 左右的柔和边缘，缩放到 20~24px 时不会显得锯齿太重。
+                float alpha =
+                    Mathf.Clamp01(
+                        radius
+                        -
+                        distance
+                        +
+                        1f
+                    );
+
+                tex.SetPixel(
+                    x,
+                    y,
+                    new Color(
+                        fill.r,
+                        fill.g,
+                        fill.b,
+                        fill.a
+                        *
+                        alpha
+                    )
+                );
+            }
+        }
+
+        tex.Apply();
+
+        return
+            tex;
+    }
+
     private static void EnsureStyles()
     {
         if (
@@ -3770,6 +4027,109 @@ public sealed class GuideOverlay : MonoBehaviour
             );
 
             _softTex.Apply();
+        }
+
+        if (
+            _triggerGroupTex
+            ==
+            null
+        )
+        {
+            _triggerGroupTex =
+                new Texture2D(
+                    1,
+                    1
+                );
+
+            _triggerGroupTex.SetPixel(
+                0,
+                0,
+                new Color(
+                    0.065f,
+                    0.090f,
+                    0.120f,
+                    1.00f
+                )
+            );
+
+            _triggerGroupTex.Apply();
+        }
+
+        if (
+            _triggerBorderTex
+            ==
+            null
+        )
+        {
+            _triggerBorderTex =
+                new Texture2D(
+                    1,
+                    1
+                );
+
+            _triggerBorderTex.SetPixel(
+                0,
+                0,
+                new Color(
+                    0.22f,
+                    0.40f,
+                    0.53f,
+                    1.00f
+                )
+            );
+
+            _triggerBorderTex.Apply();
+        }
+
+        if (
+            _stateMetCircleTex
+            ==
+            null
+        )
+        {
+            _stateMetCircleTex =
+                CreateStateCircleTexture(
+                    new Color(
+                        0.10f,
+                        0.55f,
+                        0.27f,
+                        1f
+                    )
+                );
+        }
+
+        if (
+            _stateUnmetCircleTex
+            ==
+            null
+        )
+        {
+            _stateUnmetCircleTex =
+                CreateStateCircleTexture(
+                    new Color(
+                        0.82f,
+                        0.13f,
+                        0.19f,
+                        1f
+                    )
+                );
+        }
+
+        if (
+            _stateUnknownCircleTex
+            ==
+            null
+        )
+        {
+            _stateUnknownCircleTex =
+                CreateStateCircleTexture(
+                    new Color(
+                        0.38f,
+                        0.43f,
+                        0.49f,
+                        1f
+                    )
+                );
         }
 
         if (
@@ -3911,6 +4271,58 @@ public sealed class GuideOverlay : MonoBehaviour
         }
 
         if (
+            _triggerTitleStyle
+            ==
+            null
+        )
+        {
+            _triggerTitleStyle =
+                new GUIStyle();
+
+            _triggerTitleStyle.fontSize =
+                15;
+
+            _triggerTitleStyle.fontStyle =
+                FontStyle.Bold;
+
+            _triggerTitleStyle
+                .normal
+                .textColor =
+                    new Color(
+                        0.70f,
+                        0.88f,
+                        1.00f,
+                        1f
+                    );
+        }
+
+        if (
+            _statusTitleStyle
+            ==
+            null
+        )
+        {
+            _statusTitleStyle =
+                new GUIStyle();
+
+            _statusTitleStyle.fontSize =
+                12;
+
+            _statusTitleStyle.fontStyle =
+                FontStyle.Bold;
+
+            _statusTitleStyle
+                .normal
+                .textColor =
+                    new Color(
+                        0.66f,
+                        0.76f,
+                        0.84f,
+                        1f
+                    );
+        }
+
+        if (
             _body
             ==
             null
@@ -4010,6 +4422,30 @@ public sealed class GuideOverlay : MonoBehaviour
 
             _wrapButton
                 .active
+                .textColor =
+                    Color.white;
+        }
+
+        if (
+            _stateIconSymbolStyle
+            ==
+            null
+        )
+        {
+            _stateIconSymbolStyle =
+                new GUIStyle();
+
+            _stateIconSymbolStyle.fontSize =
+                14;
+
+            _stateIconSymbolStyle.fontStyle =
+                FontStyle.Bold;
+
+            _stateIconSymbolStyle.alignment =
+                TextAnchor.MiddleCenter;
+
+            _stateIconSymbolStyle
+                .normal
                 .textColor =
                     Color.white;
         }
