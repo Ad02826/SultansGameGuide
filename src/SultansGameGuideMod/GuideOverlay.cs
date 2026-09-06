@@ -582,7 +582,7 @@ public sealed class GuideOverlay : MonoBehaviour
                             continue;
                         }
 
-                        var idObject = riteController.rite.template_id;
+                        var idObject = riteController.rite.rite_id;
 
                         if (idObject == null)
                         {
@@ -806,7 +806,7 @@ public sealed class GuideOverlay : MonoBehaviour
                 330,
                 22
             ),
-            "v0.4.76 · 当前仪式+语义审计",
+            "v0.4.77 · 当前仪式+语义审计",
             _small
         );
 
