@@ -50,6 +50,9 @@ public sealed class GuideOverlay : MonoBehaviour
 
     private static readonly Stack<int> _history = new();
 
+    // 左侧“当前剧情”列表滚动位置
+    private static Vector2 _runtimeScroll = Vector2.zero;
+
     // 右侧详情区的滚动位置
     private static Vector2 _detailScroll = Vector2.zero;
 
@@ -74,10 +77,14 @@ public sealed class GuideOverlay : MonoBehaviour
     private static GUIStyle? _boxStyle;
     private static GUIStyle? _softBoxStyle;
     private static GUIStyle? _activeButtonStyle;
+    private static GUIStyle? _riteButtonStyle;
+    private static GUIStyle? _selectedButtonStyle;
 
     private static Texture2D? _panelTex;
     private static Texture2D? _softTex;
     private static Texture2D? _activeTex;
+    private static Texture2D? _riteTex;
+    private static Texture2D? _selectedTex;
 
     private const int ResultsPerPage = 11;
 
@@ -903,7 +910,7 @@ public sealed class GuideOverlay : MonoBehaviour
                 330,
                 22
             ),
-            "v0.4.79 · 稳定运行时+语义修复",
+            "v0.4.81 · 仪式置顶+选中强化",
             _small
         );
 
@@ -974,6 +981,9 @@ public sealed class GuideOverlay : MonoBehaviour
         {
             _leftMode =
                 0;
+
+            _runtimeScroll =
+                Vector2.zero;
 
             RefreshRuntimeContext(
                 force: true
@@ -1269,60 +1279,146 @@ public sealed class GuideOverlay : MonoBehaviour
                     w,
                     90
                 ),
-                "当前没有检测到活跃剧情。\n进入一局游戏后，这里会自动显示正在进行的事件和紧接着可能出现的后续。",
+                "当前没有检测到活跃剧情。\n进入一局游戏后，这里会自动显示已激活事件和相关后续。",
                 _body
             );
 
             return;
         }
 
-        float cy =
-            y;
+        const float rowH = 44f;
+        const float bottomPadding = 16f;
 
-        int shown =
-            0;
+        float contentHeight =
+            Math.Max(
+                h,
+                _runtimeNodes.Count
+                *
+                rowH
+                +
+                bottomPadding
+            );
+
+        float viewWidth =
+            Math.Max(
+                80f,
+                w - 18f
+            );
+
+        var scrollRect =
+            new Rect(
+                x,
+                y,
+                w,
+                h
+            );
+
+        var viewRect =
+            new Rect(
+                0f,
+                0f,
+                viewWidth,
+                contentHeight
+            );
+
+        _runtimeScroll =
+            GUI.BeginScrollView(
+                scrollRect,
+                _runtimeScroll,
+                viewRect
+            );
+
+        float cy =
+            0f;
+
+        var orderedItems =
+            _runtimeNodes
+                .OrderBy(
+                    item =>
+                        item.Node.Kind
+                        ==
+                        NodeKind.Rite
+                            ?
+                            0
+                            :
+                            1
+                )
+                .ThenByDescending(
+                    item =>
+                        item.IsActive
+                )
+                .ThenBy(
+                    item =>
+                        item.Node.Name
+                )
+                .ToList();
 
         foreach (
             var item
             in
-            _runtimeNodes
+            orderedItems
         )
         {
-            if (
-                cy + 46
-                >
-                y + h
-            )
-            {
-                break;
-            }
-
-            string marker =
+            bool selected =
                 item.Node.Id
                 ==
-                _selectedId
+                _selectedId;
+
+            string marker =
+                selected
                     ?
-                    "▶ "
+                    "▶▶ "
+                    :
+                    (
+                        item.Node.Kind
+                        ==
+                        NodeKind.Rite
+                            ?
+                            "◆ "
+                            :
+                            ""
+                    );
+
+            string kindPrefix =
+                item.Node.Kind
+                ==
+                NodeKind.Rite
+                    ?
+                    "[地图仪式] "
                     :
                     "";
 
             string label =
-                $"{marker}{item.Prefix}  {item.Node.Name}";
+                $"{marker}{kindPrefix}{item.Prefix}  {item.Node.Name}";
 
             GUIStyle style =
-                item.IsActive
+                selected
                     ?
-                    _activeButtonStyle!
+                    _selectedButtonStyle!
                     :
-                    _wrapButton!;
+                    (
+                        item.Node.Kind
+                        ==
+                        NodeKind.Rite
+                            ?
+                            _riteButtonStyle!
+                            :
+                            (
+                                item.IsActive
+                                    ?
+                                    _activeButtonStyle!
+                                    :
+                                    _wrapButton!
+                            )
+                    );
 
             if (
                 GUI.Button(
                     new Rect(
-                        x,
+                        0f,
                         cy,
-                        w,
-                        40
+                        viewWidth,
+                        40f
                     ),
                     label,
                     style
@@ -1336,28 +1432,10 @@ public sealed class GuideOverlay : MonoBehaviour
             }
 
             cy +=
-                44;
-
-            shown++;
+                rowH;
         }
 
-        if (
-            shown
-            <
-            _runtimeNodes.Count
-        )
-        {
-            GUI.Label(
-                new Rect(
-                    x,
-                    cy,
-                    w,
-                    28
-                ),
-                $"还有 {_runtimeNodes.Count - shown} 个相关节点，可点“全部搜索”查看。",
-                _small
-            );
-        }
+        GUI.EndScrollView();
     }
 
     private static void DrawSearchResults(
@@ -2346,6 +2424,60 @@ public sealed class GuideOverlay : MonoBehaviour
         }
 
         if (
+            _riteTex
+            ==
+            null
+        )
+        {
+            _riteTex =
+                new Texture2D(
+                    1,
+                    1
+                );
+
+            // 地图/桌面仪式：偏暖的深金棕背景
+            _riteTex.SetPixel(
+                0,
+                0,
+                new Color(
+                    0.25f,
+                    0.20f,
+                    0.09f,
+                    1.00f
+                )
+            );
+
+            _riteTex.Apply();
+        }
+
+        if (
+            _selectedTex
+            ==
+            null
+        )
+        {
+            _selectedTex =
+                new Texture2D(
+                    1,
+                    1
+                );
+
+            // 当前选中：更明亮的蓝色，和普通 active 明显拉开
+            _selectedTex.SetPixel(
+                0,
+                0,
+                new Color(
+                    0.08f,
+                    0.42f,
+                    0.62f,
+                    1.00f
+                )
+            );
+
+            _selectedTex.Apply();
+        }
+
+        if (
             _boxStyle
             ==
             null
@@ -2589,6 +2721,131 @@ public sealed class GuideOverlay : MonoBehaviour
                     Color.white;
 
             _activeButtonStyle
+                .active
+                .textColor =
+                    Color.white;
+        }
+
+        if (
+            _riteButtonStyle
+            ==
+            null
+        )
+        {
+            _riteButtonStyle =
+                new GUIStyle();
+
+            _riteButtonStyle.fontSize =
+                12;
+
+            _riteButtonStyle.fontStyle =
+                FontStyle.Bold;
+
+            _riteButtonStyle.wordWrap =
+                true;
+
+            _riteButtonStyle.alignment =
+                TextAnchor.MiddleLeft;
+
+            _riteButtonStyle.padding =
+                new RectOffset(
+                    9,
+                    8,
+                    4,
+                    4
+                );
+
+            _riteButtonStyle
+                .normal
+                .background =
+                    _riteTex;
+
+            _riteButtonStyle
+                .hover
+                .background =
+                    _activeTex;
+
+            _riteButtonStyle
+                .active
+                .background =
+                    _activeTex;
+
+            _riteButtonStyle
+                .normal
+                .textColor =
+                    new Color(
+                        1.00f,
+                        0.92f,
+                        0.62f,
+                        1f
+                    );
+
+            _riteButtonStyle
+                .hover
+                .textColor =
+                    Color.white;
+
+            _riteButtonStyle
+                .active
+                .textColor =
+                    Color.white;
+        }
+
+        if (
+            _selectedButtonStyle
+            ==
+            null
+        )
+        {
+            _selectedButtonStyle =
+                new GUIStyle();
+
+            _selectedButtonStyle.fontSize =
+                13;
+
+            _selectedButtonStyle.fontStyle =
+                FontStyle.Bold;
+
+            _selectedButtonStyle.wordWrap =
+                true;
+
+            _selectedButtonStyle.alignment =
+                TextAnchor.MiddleLeft;
+
+            _selectedButtonStyle.padding =
+                new RectOffset(
+                    11,
+                    8,
+                    4,
+                    4
+                );
+
+            _selectedButtonStyle
+                .normal
+                .background =
+                    _selectedTex;
+
+            _selectedButtonStyle
+                .hover
+                .background =
+                    _selectedTex;
+
+            _selectedButtonStyle
+                .active
+                .background =
+                    _selectedTex;
+
+            _selectedButtonStyle
+                .normal
+                .textColor =
+                    Color.white;
+
+            _selectedButtonStyle
+                .hover
+                .textColor =
+                    Color.white;
+
+            _selectedButtonStyle
                 .active
                 .textColor =
                     Color.white;
