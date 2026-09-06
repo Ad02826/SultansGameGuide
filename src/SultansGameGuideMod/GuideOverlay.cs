@@ -187,6 +187,28 @@ public sealed class GuideOverlay : MonoBehaviour
         var e =
             Event.current;
 
+        // Counter 运行时诊断：Ctrl+Shift+C。
+        // 只读取数值，不修改任何游戏状态。
+        if (
+            e != null
+            &&
+            e.type
+            ==
+            EventType.KeyDown
+            &&
+            e.keyCode
+            ==
+            KeyCode.C
+            &&
+            e.control
+            &&
+            e.shift
+        )
+        {
+            DumpCounterDiagnostic();
+            e.Use();
+        }
+
         // Ctrl+O 仍作为备用开关。
         if (
             e != null
@@ -1037,6 +1059,208 @@ public sealed class GuideOverlay : MonoBehaviour
     // UI
     // ============================================================
 
+    private static void DumpCounterDiagnostic()
+    {
+        Log.LogInfo(
+            "========== SULTAN GUIDE COUNTER DIAGNOSTIC =========="
+        );
+
+        try
+        {
+            var player =
+                Common.Player;
+
+            if (
+                player == null
+            )
+            {
+                Log.LogInfo(
+                    "[COUNTER] Common.Player = null"
+                );
+
+                Log.LogInfo(
+                    "========== END COUNTER DIAGNOSTIC =========="
+                );
+
+                return;
+            }
+
+            int[] counterIds =
+            {
+                7000017, // 普通书店购书计数
+                7000330, // 淘书：第一方向
+                7000331, // 淘书：第二方向
+                7000332  // 淘书：第三方向
+            };
+
+            foreach (
+                int counterId
+                in
+                counterIds
+            )
+            {
+                try
+                {
+                    int value =
+                        PlayerExtensions.GetCounter(
+                            player,
+                            counterId
+                        );
+
+                    string hint =
+                        "";
+
+                    if (
+                        _db != null
+                        &&
+                        _db.CounterHints.TryGetValue(
+                            counterId,
+                            out var counterHint
+                        )
+                    )
+                    {
+                        hint =
+                            counterHint;
+                    }
+
+                    Log.LogInfo(
+                        "[COUNTER] id="
+                        +
+                        counterId
+                        +
+                        " value="
+                        +
+                        value
+                        +
+                        (
+                            hint.Length > 0
+                                ?
+                                " hint="
+                                +
+                                hint
+                                :
+                                ""
+                        )
+                    );
+                }
+                catch (
+                    Exception ex
+                )
+                {
+                    Log.LogWarning(
+                        "[COUNTER] id="
+                        +
+                        counterId
+                        +
+                        " failed: "
+                        +
+                        ex.GetType().Name
+                        +
+                        ": "
+                        +
+                        ex.Message
+                    );
+                }
+            }
+
+            // 同时验证 global_counter 的读取链，之后复杂条件监控会用到。
+            try
+            {
+                var global =
+                    Common.Global;
+
+                if (
+                    global != null
+                )
+                {
+                    int[] globalCounterIds =
+                    {
+                        7230012,
+                        7230024
+                    };
+
+                    foreach (
+                        int counterId
+                        in
+                        globalCounterIds
+                    )
+                    {
+                        try
+                        {
+                            int value =
+                                GlobalExtensions.GetCounter(
+                                    global,
+                                    counterId
+                                );
+
+                            Log.LogInfo(
+                                "[GLOBAL_COUNTER] id="
+                                +
+                                counterId
+                                +
+                                " value="
+                                +
+                                value
+                            );
+                        }
+                        catch (
+                            Exception ex
+                        )
+                        {
+                            Log.LogWarning(
+                                "[GLOBAL_COUNTER] id="
+                                +
+                                counterId
+                                +
+                                " failed: "
+                                +
+                                ex.GetType().Name
+                                +
+                                ": "
+                                +
+                                ex.Message
+                            );
+                        }
+                    }
+                }
+                else
+                {
+                    Log.LogInfo(
+                        "[GLOBAL_COUNTER] Common.Global = null"
+                    );
+                }
+            }
+            catch (
+                Exception ex
+            )
+            {
+                Log.LogWarning(
+                    "[GLOBAL_COUNTER] failed: "
+                    +
+                    ex.GetType().Name
+                    +
+                    ": "
+                    +
+                    ex.Message
+                );
+            }
+        }
+        catch (
+            Exception ex
+        )
+        {
+            Log.LogError(
+                "[COUNTER_DIAGNOSTIC] "
+                +
+                ex
+            );
+        }
+
+        Log.LogInfo(
+            "========== END COUNTER DIAGNOSTIC =========="
+        );
+    }
+
     private static void DrawPanel()
     {
         var oldGuiColor = GUI.color;
@@ -1088,7 +1312,7 @@ public sealed class GuideOverlay : MonoBehaviour
                 330,
                 22
             ),
-            "v0.4.86 · 正式版",
+            "v0.4.87 · Counter诊断",
             _small
         );
 
