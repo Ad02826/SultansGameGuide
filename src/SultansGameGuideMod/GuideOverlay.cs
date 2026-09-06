@@ -1163,87 +1163,6 @@ public sealed class GuideOverlay : MonoBehaviour
                 }
             }
 
-            // 同时验证 global_counter 的读取链，之后复杂条件监控会用到。
-            try
-            {
-                var global =
-                    Common.Global;
-
-                if (
-                    global != null
-                )
-                {
-                    int[] globalCounterIds =
-                    {
-                        7230012,
-                        7230024
-                    };
-
-                    foreach (
-                        int counterId
-                        in
-                        globalCounterIds
-                    )
-                    {
-                        try
-                        {
-                            int value =
-                                GlobalExtensions.GetCounter(
-                                    global,
-                                    counterId
-                                );
-
-                            Log.LogInfo(
-                                "[GLOBAL_COUNTER] id="
-                                +
-                                counterId
-                                +
-                                " value="
-                                +
-                                value
-                            );
-                        }
-                        catch (
-                            Exception ex
-                        )
-                        {
-                            Log.LogWarning(
-                                "[GLOBAL_COUNTER] id="
-                                +
-                                counterId
-                                +
-                                " failed: "
-                                +
-                                ex.GetType().Name
-                                +
-                                ": "
-                                +
-                                ex.Message
-                            );
-                        }
-                    }
-                }
-                else
-                {
-                    Log.LogInfo(
-                        "[GLOBAL_COUNTER] Common.Global = null"
-                    );
-                }
-            }
-            catch (
-                Exception ex
-            )
-            {
-                Log.LogWarning(
-                    "[GLOBAL_COUNTER] failed: "
-                    +
-                    ex.GetType().Name
-                    +
-                    ": "
-                    +
-                    ex.Message
-                );
-            }
         }
         catch (
             Exception ex
@@ -1312,7 +1231,7 @@ public sealed class GuideOverlay : MonoBehaviour
                 330,
                 22
             ),
-            "v0.4.87 · Counter诊断",
+            "v0.4.87 · Counter诊断·BuildFix",
             _small
         );
 

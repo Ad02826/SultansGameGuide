@@ -16,7 +16,7 @@ public sealed class Plugin : BasePlugin
             AddComponent<GuideOverlay>();
 
         Log.LogInfo(
-            "苏丹攻略助手 0.4.87 已加载：Counter运行时诊断 + 真实地图仪式"
+            "苏丹攻略助手 0.4.87 已加载：Counter运行时诊断 BuildFix + 真实地图仪式"
         );
 
         Log.LogInfo(
