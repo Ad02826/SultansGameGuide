@@ -310,62 +310,16 @@ public sealed class GuideOverlay : MonoBehaviour
         bool suppress
     )
     {
-        try
-        {
-            var current =
-                EventSystem.current;
-
-            if (suppress)
-            {
-                if (
-                    current != null
-                    &&
-                    current.enabled
-                )
-                {
-                    current.enabled =
-                        false;
-
-                    _suppressedEventSystem =
-                        current;
-
-                    _gameUiSuppressed =
-                        true;
-                }
-            }
-            else
-            {
-                RestoreGameUiInput();
-            }
-        }
-        catch
-        {
-        }
+        // 不再修改 EventSystem.current.enabled。
+        // Sultan's Game 的部分 UI 逻辑默认 EventSystem 始终有效；
+        // 临时禁用它会让游戏自己的 UI 脚本出现空引用。
+        //
+        // 防穿透继续依靠 OnGUI 末尾 e.Use() 吃掉鼠标事件。
     }
 
     private static void RestoreGameUiInput()
     {
-        if (!_gameUiSuppressed)
-        {
-            return;
-        }
-
-        try
-        {
-            if (
-                _suppressedEventSystem
-                !=
-                null
-            )
-            {
-                _suppressedEventSystem.enabled =
-                    true;
-            }
-        }
-        catch
-        {
-        }
-
+        // v0.4.72 起不再操作游戏 EventSystem。
         _suppressedEventSystem =
             null;
 
@@ -721,7 +675,7 @@ public sealed class GuideOverlay : MonoBehaviour
                 330,
                 22
             ),
-            "v0.4.71 · 长文本布局修复",
+            "v0.4.72 · EventSystem兼容修复",
             _small
         );
 
