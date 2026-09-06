@@ -99,6 +99,9 @@ public sealed class GuideDatabase
             "after_story",
             NodeKind.AfterStory
         );
+
+        // 所有节点加载完成后，建立“谁会创建 / 开启我”的反向触发索引。
+        BuildTriggerBranches();
     }
 
     private void LoadCards()
@@ -463,6 +466,31 @@ public sealed class GuideDatabase
                 }
 
                 if (
+                    root.TryGetProperty(
+                        "on",
+                        out var on
+                    )
+                )
+                {
+                    node.HumanTiming =
+                        HumanizeTiming(
+                            on
+                        );
+                }
+
+                // 为“触发机制”建立精确的 action 级出边。
+                // 这里会保留 settlement 局部分支自己的 condition，
+                // 而不是只使用整个节点的顶层 condition。
+                CollectOutgoingTriggers(
+                    root,
+                    node,
+                    "",
+                    node.HumanCondition,
+                    node.RawCondition,
+                    false
+                );
+
+                if (
                     kind
                     ==
                     NodeKind.AfterStory
@@ -652,6 +680,29 @@ public sealed class GuideDatabase
     // ============================================================
     // 条件：先解析成逻辑树，再从逻辑树重新写成人话
     // ============================================================
+
+    public string HumanizeConditionAtom(
+        string key,
+        JsonElement value
+    )
+    {
+        return
+            CleanupHumanText(
+                RenderAtom(
+                    new CondNode
+                    {
+                        Kind =
+                            CondKind.Atom,
+                        Key =
+                            key,
+                        Value =
+                            ValueToString(
+                                value
+                            )
+                    }
+                )
+            );
+    }
 
     public string HumanizeCondition(
         JsonElement element
@@ -2295,6 +2346,1151 @@ public sealed class GuideDatabase
         };
     }
 
+
+    // ============================================================
+    // 触发机制：检查阶段 + action 反向索引
+    // ============================================================
+
+    private string HumanizeTiming(
+        JsonElement on
+    )
+    {
+        if (
+            on.ValueKind
+            !=
+            JsonValueKind.Object
+        )
+        {
+            return "";
+        }
+
+        var lines =
+            new List<string>();
+
+        foreach (
+            var property
+            in
+            on.EnumerateObject()
+        )
+        {
+            string key =
+                property.Name;
+
+            string value =
+                ValueToString(
+                    property.Value
+                );
+
+            switch (key)
+            {
+                case "round_begin_ba":
+                    lines.Add(
+                        DescribeRoundBeginTiming(
+                            property.Value
+                        )
+                    );
+                    break;
+
+                case "rite_end":
+                    lines.Add(
+                        $"指定仪式结束后：当{DescribeRiteTimingTarget(property.Value)}完成结算并关闭时，立即检查本事件。"
+                    );
+                    break;
+
+                case "rite_start":
+                    lines.Add(
+                        $"指定仪式开始时：当{DescribeRiteTimingTarget(property.Value)}正式开始执行时，立即检查本事件。"
+                    );
+                    break;
+
+                case "card_clean":
+                    lines.Add(
+                        $"卡牌被移除时：当{DescribeCardTimingTarget(property.Value)}从当前局面中被清除时，立即检查本事件。"
+                    );
+                    break;
+
+                case "card_born":
+                    lines.Add(
+                        $"卡牌出现时：当{DescribeCardTimingTarget(property.Value)}被生成 / 获得时，立即检查本事件。"
+                    );
+                    break;
+
+                case "counter":
+                    lines.Add(
+                        $"计数器变化时：当计数器 {value} 发生更新时，事件系统会重新检查本事件的条件。"
+                    );
+                    break;
+
+                case "game_end":
+                    lines.Add(
+                        "一局游戏结束阶段：在本局进入结束 / 结算流程时检查。"
+                    );
+                    break;
+
+                case "close_wizard":
+                    lines.Add(
+                        "关闭引导 / 向导界面后：对应的引导流程关闭时立即检查。"
+                    );
+                    break;
+
+                case "close_prompt":
+                    lines.Add(
+                        "关闭提示窗口后：对应剧情提示框关闭时立即检查。"
+                    );
+                    break;
+
+                case "open_card_info":
+                    lines.Add(
+                        "打开卡牌详情时：玩家打开对应卡牌的信息界面时检查。"
+                    );
+                    break;
+
+                case "open_rite":
+                    lines.Add(
+                        $"打开仪式界面时：玩家打开{DescribeRiteTimingTarget(property.Value)}时立即检查。"
+                    );
+                    break;
+
+                default:
+                    lines.Add(
+                        $"特殊检查阶段「{key}」：游戏在该阶段发生时检查（配置值：{value}）。"
+                    );
+                    break;
+            }
+        }
+
+        return
+            string.Join(
+                "\n",
+                lines.Where(
+                    x =>
+                        !string.IsNullOrWhiteSpace(
+                            x
+                        )
+                )
+            );
+    }
+
+    private static string DescribeRoundBeginTiming(
+        JsonElement value
+    )
+    {
+        if (
+            value.ValueKind
+            ==
+            JsonValueKind.Number
+            &&
+            value.TryGetInt32(
+                out var n
+            )
+        )
+        {
+            if (n <= 1)
+            {
+                return
+                    "每回合开始时：进入新回合的刷新 / 结算起始阶段后检查一次。";
+            }
+
+            return
+                $"回合开始阶段：事件被启用后，按约每 {n} 回合一次的节奏在回合开始时检查。";
+        }
+
+        if (
+            value.ValueKind
+            ==
+            JsonValueKind.Array
+        )
+        {
+            var numbers =
+                value.EnumerateArray()
+                    .Where(
+                        x =>
+                            x.ValueKind
+                            ==
+                            JsonValueKind.Number
+                    )
+                    .Select(
+                        x =>
+                            x.TryGetInt32(
+                                out var n
+                            )
+                                ?
+                                n
+                                :
+                                0
+                    )
+                    .Where(
+                        x =>
+                            x > 0
+                    )
+                    .ToList();
+
+            if (
+                numbers.Count
+                >=
+                2
+            )
+            {
+                return
+                    $"回合开始阶段：每隔 {numbers[0]}～{numbers[1]} 回合（该区间由游戏决定具体间隔）在回合开始时检查。";
+            }
+        }
+
+        return
+            "回合开始阶段：进入新回合的刷新 / 结算起始阶段时检查。";
+    }
+
+    private string DescribeRiteTimingTarget(
+        JsonElement value
+    )
+    {
+        var ids =
+            ExtractIntValues(
+                value
+            );
+
+        if (
+            ids.Count
+            ==
+            0
+        )
+        {
+            return
+                "对应仪式";
+        }
+
+        return
+            string.Join(
+                "、",
+                ids.Select(
+                    id =>
+                        RiteNames.TryGetValue(
+                            id,
+                            out var name
+                        )
+                            ?
+                            $"《{name}》"
+                            :
+                            $"仪式 {id}"
+                )
+            );
+    }
+
+    private string DescribeCardTimingTarget(
+        JsonElement value
+    )
+    {
+        var ids =
+            ExtractIntValues(
+                value
+            );
+
+        if (
+            ids.Count
+            ==
+            0
+        )
+        {
+            return
+                "对应卡牌";
+        }
+
+        return
+            string.Join(
+                "、",
+                ids.Select(
+                    id =>
+                        CardNames.TryGetValue(
+                            id,
+                            out var name
+                        )
+                            ?
+                            $"「{name}」"
+                            :
+                            $"卡牌 {id}"
+                )
+            );
+    }
+
+    private static List<int> ExtractIntValues(
+        JsonElement value
+    )
+    {
+        var result =
+            new List<int>();
+
+        if (
+            value.ValueKind
+            ==
+            JsonValueKind.Number
+            &&
+            value.TryGetInt32(
+                out var id
+            )
+        )
+        {
+            result.Add(id);
+
+            return result;
+        }
+
+        if (
+            value.ValueKind
+            ==
+            JsonValueKind.Array
+        )
+        {
+            foreach (
+                var item
+                in
+                value.EnumerateArray()
+            )
+            {
+                if (
+                    item.ValueKind
+                    ==
+                    JsonValueKind.Number
+                    &&
+                    item.TryGetInt32(
+                        out var itemId
+                    )
+                )
+                {
+                    result.Add(
+                        itemId
+                    );
+                }
+            }
+        }
+
+        return result;
+    }
+
+    private void CollectOutgoingTriggers(
+        JsonElement element,
+        GuideNode node,
+        string context,
+        string inheritedHumanCondition,
+        string inheritedRawCondition,
+        bool insideAction
+    )
+    {
+        if (
+            element.ValueKind
+            ==
+            JsonValueKind.Object
+        )
+        {
+            string humanCondition =
+                inheritedHumanCondition;
+
+            string rawCondition =
+                inheritedRawCondition;
+
+            if (
+                element.TryGetProperty(
+                    "condition",
+                    out var localCondition
+                )
+                &&
+                localCondition.ValueKind
+                ==
+                JsonValueKind.Object
+            )
+            {
+                rawCondition =
+                    localCondition.GetRawText();
+
+                humanCondition =
+                    HumanizeCondition(
+                        localCondition
+                    );
+            }
+
+            string localContext =
+                context;
+
+            if (
+                string.IsNullOrWhiteSpace(
+                    localContext
+                )
+                &&
+                element.TryGetProperty(
+                    "result_title",
+                    out var resultTitle
+                )
+                &&
+                resultTitle.ValueKind
+                ==
+                JsonValueKind.String
+            )
+            {
+                string title =
+                    StripRichText(
+                        resultTitle.GetString()
+                        ??
+                        ""
+                    );
+
+                if (
+                    !string.IsNullOrWhiteSpace(
+                        title
+                    )
+                )
+                {
+                    localContext =
+                        title;
+                }
+            }
+
+            var optionLabels =
+                new Dictionary<string, string>(
+                    StringComparer.OrdinalIgnoreCase
+                );
+
+            if (
+                element.TryGetProperty(
+                    "option",
+                    out var option
+                )
+                &&
+                option.ValueKind
+                ==
+                JsonValueKind.Object
+                &&
+                option.TryGetProperty(
+                    "items",
+                    out var items
+                )
+                &&
+                items.ValueKind
+                ==
+                JsonValueKind.Array
+            )
+            {
+                foreach (
+                    var item
+                    in
+                    items.EnumerateArray()
+                )
+                {
+                    if (
+                        item.ValueKind
+                        !=
+                        JsonValueKind.Object
+                        ||
+                        !item.TryGetProperty(
+                            "tag",
+                            out var tagElement
+                        )
+                        ||
+                        !item.TryGetProperty(
+                            "text",
+                            out var textElement
+                        )
+                    )
+                    {
+                        continue;
+                    }
+
+                    string tag =
+                        tagElement.GetString()
+                        ??
+                        "";
+
+                    string label =
+                        StripRichText(
+                            textElement.GetString()
+                            ??
+                            ""
+                        );
+
+                    if (
+                        tag.Length > 0
+                        &&
+                        label.Length > 0
+                    )
+                    {
+                        optionLabels[tag] =
+                            label;
+                    }
+                }
+            }
+
+            foreach (
+                var property
+                in
+                element.EnumerateObject()
+            )
+            {
+                if (
+                    property.Name
+                    ==
+                    "condition"
+                )
+                {
+                    continue;
+                }
+
+                string nextContext =
+                    localContext;
+
+                if (
+                    property.Name
+                    ==
+                    "success"
+                )
+                {
+                    nextContext =
+                        "成功后";
+                }
+                else if (
+                    property.Name
+                    ==
+                    "failed"
+                )
+                {
+                    nextContext =
+                        "失败后";
+                }
+                else if (
+                    property.Name.StartsWith(
+                        "case:",
+                        StringComparison.OrdinalIgnoreCase
+                    )
+                )
+                {
+                    string tag =
+                        property.Name[5..];
+
+                    nextContext =
+                        optionLabels.TryGetValue(
+                            tag,
+                            out var choice
+                        )
+                            ?
+                            $"选择「{choice}」"
+                            :
+                            (
+                                string.IsNullOrWhiteSpace(
+                                    localContext
+                                )
+                                    ?
+                                    "做出对应选择"
+                                    :
+                                    localContext
+                            );
+                }
+
+                bool nextInsideAction =
+                    insideAction
+                    ||
+                    property.Name
+                    ==
+                    "action";
+
+                // rite 只有出现在 action 内才表示“创建 / 开启仪式”。
+                // condition 里的 rite / !rite 只是状态判断，绝不能当作剧情出边。
+                if (
+                    property.Name
+                    ==
+                    "rite"
+                    &&
+                    insideAction
+                )
+                {
+                    AddOutgoingTriggerValues(
+                        property.Value,
+                        node,
+                        nextContext,
+                        NodeKind.Rite,
+                        humanCondition,
+                        rawCondition
+                    );
+
+                    continue;
+                }
+
+                // event_on 在 action 中最常见，也有少量配置放在 result 中，
+                // 语义都是“开启后续事件”，所以只要不在 condition 中就保留。
+                if (
+                    property.Name
+                    ==
+                    "event_on"
+                )
+                {
+                    AddOutgoingTriggerValues(
+                        property.Value,
+                        node,
+                        nextContext,
+                        NodeKind.Event,
+                        humanCondition,
+                        rawCondition
+                    );
+
+                    continue;
+                }
+
+                CollectOutgoingTriggers(
+                    property.Value,
+                    node,
+                    nextContext,
+                    humanCondition,
+                    rawCondition,
+                    nextInsideAction
+                );
+            }
+        }
+        else if (
+            element.ValueKind
+            ==
+            JsonValueKind.Array
+        )
+        {
+            foreach (
+                var item
+                in
+                element.EnumerateArray()
+            )
+            {
+                CollectOutgoingTriggers(
+                    item,
+                    node,
+                    context,
+                    inheritedHumanCondition,
+                    inheritedRawCondition,
+                    insideAction
+                );
+            }
+        }
+    }
+
+    private static void AddOutgoingTriggerValues(
+        JsonElement value,
+        GuideNode node,
+        string label,
+        NodeKind kind,
+        string humanCondition,
+        string rawCondition
+    )
+    {
+        if (
+            value.ValueKind
+            ==
+            JsonValueKind.Number
+            &&
+            value.TryGetInt32(
+                out var id
+            )
+        )
+        {
+            node.OutgoingTriggers.Add(
+                new GuideOutgoingTrigger
+                {
+                    Label =
+                        label,
+                    TargetId =
+                        id,
+                    TargetKind =
+                        kind,
+                    HumanCondition =
+                        string.IsNullOrWhiteSpace(
+                            humanCondition
+                        )
+                            ?
+                            "没有额外要求。"
+                            :
+                            humanCondition,
+                    RawCondition =
+                        rawCondition
+                }
+            );
+
+            return;
+        }
+
+        if (
+            value.ValueKind
+            ==
+            JsonValueKind.Array
+        )
+        {
+            foreach (
+                var item
+                in
+                value.EnumerateArray()
+            )
+            {
+                if (
+                    item.ValueKind
+                    ==
+                    JsonValueKind.Number
+                    &&
+                    item.TryGetInt32(
+                        out var itemId
+                    )
+                )
+                {
+                    node.OutgoingTriggers.Add(
+                        new GuideOutgoingTrigger
+                        {
+                            Label =
+                                label,
+                            TargetId =
+                                itemId,
+                            TargetKind =
+                                kind,
+                            HumanCondition =
+                                string.IsNullOrWhiteSpace(
+                                    humanCondition
+                                )
+                                    ?
+                                    "没有额外要求。"
+                                    :
+                                    humanCondition,
+                            RawCondition =
+                                rawCondition
+                        }
+                    );
+                }
+            }
+        }
+    }
+
+    private void BuildTriggerBranches()
+    {
+        foreach (
+            var node
+            in
+            Nodes.Values
+        )
+        {
+            node.TriggerBranches.Clear();
+        }
+
+        foreach (
+            var source
+            in
+            Nodes.Values
+        )
+        {
+            foreach (
+                var edge
+                in
+                source.OutgoingTriggers
+            )
+            {
+                if (
+                    !Nodes.TryGetValue(
+                        edge.TargetId,
+                        out var target
+                    )
+                    ||
+                    target.Kind
+                    !=
+                    edge.TargetKind
+                )
+                {
+                    continue;
+                }
+
+                if (
+                    target.Kind
+                    ==
+                    NodeKind.Rite
+                )
+                {
+                    target.TriggerBranches.Add(
+                        new GuideTriggerBranch
+                        {
+                            Name =
+                                BuildRiteTriggerBranchName(
+                                    source,
+                                    target,
+                                    edge
+                                ),
+                            SourceId =
+                                source.Id,
+                            SourceKind =
+                                source.Kind,
+                            SourceName =
+                                source.Name,
+                            SourceContext =
+                                edge.Label,
+                            Timing =
+                                BuildSourceExecutionTiming(
+                                    source
+                                ),
+                            HumanCondition =
+                                edge.HumanCondition,
+                            RawCondition =
+                                edge.RawCondition,
+                            Effect =
+                                string.IsNullOrWhiteSpace(
+                                    edge.Label
+                                )
+                                    ?
+                                    $"满足后生成《{target.Name}》。"
+                                    :
+                                    $"{edge.Label}，满足后生成《{target.Name}》。"
+                        }
+                    );
+                }
+                else if (
+                    target.Kind
+                    ==
+                    NodeKind.Event
+                )
+                {
+                    target.TriggerBranches.Add(
+                        new GuideTriggerBranch
+                        {
+                            Name =
+                                BuildEventTriggerBranchName(
+                                    source,
+                                    edge
+                                ),
+                            SourceId =
+                                source.Id,
+                            SourceKind =
+                                source.Kind,
+                            SourceName =
+                                source.Name,
+                            SourceContext =
+                                edge.Label,
+                            Timing =
+                                BuildEventTimingDescription(
+                                    target
+                                ),
+                            HumanCondition =
+                                target.HumanCondition,
+                            RawCondition =
+                                target.RawCondition,
+                            Effect =
+                                $"由{DisplayNode(source)}开启此事件；开启后按本事件自己的检查阶段与条件触发。"
+                        }
+                    );
+                }
+            }
+        }
+
+        foreach (
+            var node
+            in
+            Nodes.Values
+        )
+        {
+            // 同一来源 / 同一分支在配置中可能重复写入，先去重。
+            var unique =
+                node.TriggerBranches
+                    .GroupBy(
+                        x =>
+                            (
+                                x.Name,
+                                x.SourceId,
+                                x.SourceContext,
+                                x.RawCondition
+                            )
+                    )
+                    .Select(
+                        x =>
+                            x.First()
+                    )
+                    .ToList();
+
+            node.TriggerBranches.Clear();
+            node.TriggerBranches.AddRange(
+                unique
+            );
+
+            if (
+                node.Kind
+                ==
+                NodeKind.Event
+                &&
+                node.TriggerBranches.Count
+                ==
+                0
+            )
+            {
+                node.TriggerBranches.Add(
+                    new GuideTriggerBranch
+                    {
+                        Name =
+                            "事件检查",
+                        SourceId =
+                            node.Id,
+                        SourceKind =
+                            node.Kind,
+                        SourceName =
+                            node.Name,
+                        Timing =
+                            BuildEventTimingDescription(
+                                node
+                            ),
+                        HumanCondition =
+                            node.HumanCondition,
+                        RawCondition =
+                            node.RawCondition,
+                        Effect =
+                            $"条件满足后触发「{node.Name}」。"
+                    }
+                );
+            }
+            else if (
+                node.Kind
+                ==
+                NodeKind.Rite
+                &&
+                node.TriggerBranches.Count
+                ==
+                0
+            )
+            {
+                node.TriggerBranches.Add(
+                    new GuideTriggerBranch
+                    {
+                        Name =
+                            "系统 / 剧情直接开启",
+                        SourceId =
+                            0,
+                        SourceKind =
+                            null,
+                        SourceName =
+                            "",
+                        Timing =
+                            "没有从普通 event_on / rite action 中解析到明确上游。这个仪式可能由初始场景、脚本或特殊系统流程直接加入地图。",
+                        HumanCondition =
+                            string.IsNullOrWhiteSpace(
+                                node.HumanCondition
+                            )
+                                ?
+                                "当前配置没有可用于判断的普通上游条件。"
+                                :
+                                node.HumanCondition,
+                        RawCondition =
+                            node.RawCondition,
+                        Effect =
+                            $"满足对应系统流程后出现《{node.Name}》。",
+                        IsFallback =
+                            true
+                    }
+                );
+            }
+            else if (
+                node.Kind
+                ==
+                NodeKind.AfterStory
+                &&
+                node.TriggerBranches.Count
+                ==
+                0
+            )
+            {
+                node.TriggerBranches.Add(
+                    new GuideTriggerBranch
+                    {
+                        Name =
+                            "结局条件",
+                        SourceId =
+                            node.Id,
+                        SourceKind =
+                            node.Kind,
+                        SourceName =
+                            node.Name,
+                        Timing =
+                            "进入结局 / 后日谈判定阶段时检查。",
+                        HumanCondition =
+                            node.HumanCondition,
+                        RawCondition =
+                            node.RawCondition,
+                        Effect =
+                            $"条件满足后进入「{node.Name}」。"
+                    }
+                );
+            }
+        }
+    }
+
+    private string BuildEventTimingDescription(
+        GuideNode node
+    )
+    {
+        if (
+            !string.IsNullOrWhiteSpace(
+                node.HumanTiming
+            )
+        )
+        {
+            return
+                node.HumanTiming;
+        }
+
+        return
+            "事件被启用后，等待游戏对应的剧情检查点；该配置没有单独写出可展示的 on 检查阶段。";
+    }
+
+    private string BuildSourceExecutionTiming(
+        GuideNode source
+    )
+    {
+        if (
+            source.Kind
+            ==
+            NodeKind.Event
+        )
+        {
+            return
+                BuildEventTimingDescription(
+                    source
+                );
+        }
+
+        if (
+            source.Kind
+            ==
+            NodeKind.Rite
+        )
+        {
+            return
+                $"在《{source.Name}》的仪式结算阶段：当玩家完成对应选择 / 判定并进入该分支时执行。";
+        }
+
+        return
+            "在对应剧情分支结算时执行。";
+    }
+
+    private static string BuildEventTriggerBranchName(
+        GuideNode source,
+        GuideOutgoingTrigger edge
+    )
+    {
+        if (
+            !string.IsNullOrWhiteSpace(
+                edge.Label
+            )
+        )
+        {
+            return
+                $"{source.Name} · {edge.Label}";
+        }
+
+        return
+            source.Name;
+    }
+
+    private static string BuildRiteTriggerBranchName(
+        GuideNode source,
+        GuideNode target,
+        GuideOutgoingTrigger edge
+    )
+    {
+        if (
+            source.Kind
+            ==
+            NodeKind.Event
+        )
+        {
+            if (
+                RawConditionHasRiteState(
+                    edge.RawCondition,
+                    target.Id,
+                    false
+                )
+            )
+            {
+                return
+                    "首次出现";
+            }
+
+            if (
+                RawConditionHasRiteState(
+                    edge.RawCondition,
+                    target.Id,
+                    true
+                )
+            )
+            {
+                return
+                    "后续刷新";
+            }
+        }
+
+        if (
+            !string.IsNullOrWhiteSpace(
+                edge.Label
+            )
+        )
+        {
+            return
+                edge.Label;
+        }
+
+        if (
+            !string.Equals(
+                source.Name,
+                target.Name,
+                StringComparison.OrdinalIgnoreCase
+            )
+        )
+        {
+            return
+                source.Name;
+        }
+
+        return
+            source.Kind
+            ==
+            NodeKind.Event
+                ?
+                "事件触发"
+                :
+                "仪式分支";
+    }
+
+    private static bool RawConditionHasRiteState(
+        string raw,
+        int riteId,
+        bool exists
+    )
+    {
+        if (
+            string.IsNullOrWhiteSpace(
+                raw
+            )
+        )
+        {
+            return false;
+        }
+
+        string key =
+            exists
+                ?
+                "rite"
+                :
+                "!rite";
+
+        return
+            Regex.IsMatch(
+                raw,
+                $"\\\"{Regex.Escape(key)}\\\"\\s*:\\s*{riteId}(?:\\D|$)"
+            );
+    }
+
+    private static string DisplayNode(
+        GuideNode node
+    )
+    {
+        return
+            node.Kind
+            ==
+            NodeKind.Rite
+                ?
+                $"《{node.Name}》"
+                :
+                $"「{node.Name}」";
+    }
+
     // ============================================================
     // 后续事件 / 仪式：翻译成“接下来会怎样”
     // ============================================================
@@ -2443,7 +3639,8 @@ public sealed class GuideDatabase
     private void CollectLinks(
         JsonElement element,
         GuideNode node,
-        string? context
+        string? context,
+        bool insideAction = false
     )
     {
         if (
@@ -2584,6 +3781,24 @@ public sealed class GuideDatabase
                 if (
                     property.Name
                     ==
+                    "condition"
+                )
+                {
+                    // condition 里的 rite / !rite 只是状态判断，
+                    // 不能当成“后续开启某仪式”。
+                    continue;
+                }
+
+                bool nextInsideAction =
+                    insideAction
+                    ||
+                    property.Name
+                    ==
+                    "action";
+
+                if (
+                    property.Name
+                    ==
                     "event_on"
                     ||
                     property.Name
@@ -2605,6 +3820,8 @@ public sealed class GuideDatabase
                     property.Name
                     ==
                     "rite"
+                    &&
+                    insideAction
                 )
                 {
                     AddTargetValues(
@@ -2620,7 +3837,8 @@ public sealed class GuideDatabase
                 CollectLinks(
                     property.Value,
                     node,
-                    nextContext
+                    nextContext,
+                    nextInsideAction
                 );
             }
         }
@@ -2639,7 +3857,8 @@ public sealed class GuideDatabase
                 CollectLinks(
                     item,
                     node,
-                    context
+                    context,
+                    insideAction
                 );
             }
         }

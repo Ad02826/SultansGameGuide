@@ -1,5 +1,7 @@
 using System;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using BepInEx.Logging;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -33,6 +35,20 @@ public sealed class GuideOverlay : MonoBehaviour
         public bool IsCurrent { get; init; }
     }
 
+    private enum ConditionRuntimeState
+    {
+        Unknown,
+        Met,
+        Unmet
+    }
+
+    private sealed class ConditionCheckRow
+    {
+        public ConditionRuntimeState State { get; init; }
+        public string Text { get; init; } = "";
+        public string Detail { get; init; } = "";
+    }
+
     private static GuideDatabase? _db;
 
     private static bool _visible = true;
@@ -62,6 +78,10 @@ public sealed class GuideOverlay : MonoBehaviour
     private static int _selectedId = 0;
 
     private static readonly Stack<int> _history = new();
+
+    // “触发机制”分支默认折叠；点击分支名后展开。
+    private static readonly HashSet<string> _expandedTriggerBranches =
+        new();
 
     // 左侧“当前仪式”列表滚动位置
     private static Vector2 _runtimeScroll = Vector2.zero;
@@ -186,28 +206,6 @@ public sealed class GuideOverlay : MonoBehaviour
     {
         var e =
             Event.current;
-
-        // Counter 运行时诊断：Ctrl+Shift+C。
-        // 只读取数值，不修改任何游戏状态。
-        if (
-            e != null
-            &&
-            e.type
-            ==
-            EventType.KeyDown
-            &&
-            e.keyCode
-            ==
-            KeyCode.C
-            &&
-            e.control
-            &&
-            e.shift
-        )
-        {
-            DumpCounterDiagnostic();
-            e.Use();
-        }
 
         // Ctrl+O 仍作为备用开关。
         if (
@@ -1059,127 +1057,6 @@ public sealed class GuideOverlay : MonoBehaviour
     // UI
     // ============================================================
 
-    private static void DumpCounterDiagnostic()
-    {
-        Log.LogInfo(
-            "========== SULTAN GUIDE COUNTER DIAGNOSTIC =========="
-        );
-
-        try
-        {
-            var player =
-                Common.Player;
-
-            if (
-                player == null
-            )
-            {
-                Log.LogInfo(
-                    "[COUNTER] Common.Player = null"
-                );
-
-                Log.LogInfo(
-                    "========== END COUNTER DIAGNOSTIC =========="
-                );
-
-                return;
-            }
-
-            int[] counterIds =
-            {
-                7000017, // 普通书店购书计数
-                7000330, // 淘书：第一方向
-                7000331, // 淘书：第二方向
-                7000332  // 淘书：第三方向
-            };
-
-            foreach (
-                int counterId
-                in
-                counterIds
-            )
-            {
-                try
-                {
-                    int value =
-                        PlayerExtensions.GetCounter(
-                            player,
-                            counterId
-                        );
-
-                    string hint =
-                        "";
-
-                    if (
-                        _db != null
-                        &&
-                        _db.CounterHints.TryGetValue(
-                            counterId,
-                            out var counterHint
-                        )
-                    )
-                    {
-                        hint =
-                            counterHint;
-                    }
-
-                    Log.LogInfo(
-                        "[COUNTER] id="
-                        +
-                        counterId
-                        +
-                        " value="
-                        +
-                        value
-                        +
-                        (
-                            hint.Length > 0
-                                ?
-                                " hint="
-                                +
-                                hint
-                                :
-                                ""
-                        )
-                    );
-                }
-                catch (
-                    Exception ex
-                )
-                {
-                    Log.LogWarning(
-                        "[COUNTER] id="
-                        +
-                        counterId
-                        +
-                        " failed: "
-                        +
-                        ex.GetType().Name
-                        +
-                        ": "
-                        +
-                        ex.Message
-                    );
-                }
-            }
-
-        }
-        catch (
-            Exception ex
-        )
-        {
-            Log.LogError(
-                "[COUNTER_DIAGNOSTIC] "
-                +
-                ex
-            );
-        }
-
-        Log.LogInfo(
-            "========== END COUNTER DIAGNOSTIC =========="
-        );
-    }
-
     private static void DrawPanel()
     {
         var oldGuiColor = GUI.color;
@@ -1231,7 +1108,7 @@ public sealed class GuideOverlay : MonoBehaviour
                 330,
                 22
             ),
-            "v0.4.87 · Counter诊断·BuildFix",
+            "v0.4.88 · 触发机制预览版",
             _small
         );
 
@@ -1932,23 +1809,6 @@ public sealed class GuideOverlay : MonoBehaviour
             return;
         }
 
-        // 先估算整个右侧详情所需高度，
-        // 再创建一个真正的垂直 ScrollView。
-        string condition =
-            string.IsNullOrWhiteSpace(
-                node.HumanCondition
-            )
-                ?
-                "没有额外要求。"
-                :
-                node.HumanCondition;
-
-        float conditionHeight =
-            EstimateTextHeight(
-                condition,
-                58
-            );
-
         float outcomeHeight =
             0f;
 
@@ -1970,8 +1830,6 @@ public sealed class GuideOverlay : MonoBehaviour
             ??
             "";
 
-        // 有滚动以后，不需要像以前那样过早截断。
-        // 仍设置一个较高上限，避免极端配置让单个节点无限拉长。
         if (
             result.Length
             >
@@ -2003,10 +1861,15 @@ public sealed class GuideOverlay : MonoBehaviour
         int linkCount =
             node.Links.Count;
 
+        float triggerHeight =
+            EstimateTriggerMechanismHeight(
+                node
+            );
+
         float contentHeight =
-            62f                         // 标题
+            62f
             +
-            27f + conditionHeight + 16f
+            triggerHeight
             +
             (
                 outcomeHeight > 0
@@ -2033,7 +1896,7 @@ public sealed class GuideOverlay : MonoBehaviour
             *
             50f
             +
-            40f;
+            60f;
 
         float viewWidth =
             Math.Max(
@@ -2070,7 +1933,6 @@ public sealed class GuideOverlay : MonoBehaviour
                 viewRect
             );
 
-        // ScrollView 内部使用相对坐标。
         float localX =
             6f;
 
@@ -2147,7 +2009,7 @@ public sealed class GuideOverlay : MonoBehaviour
             50f;
 
         // =========================
-        // 怎么触发
+        // 触发机制
         // =========================
         GUI.Label(
             new Rect(
@@ -2156,41 +2018,143 @@ public sealed class GuideOverlay : MonoBehaviour
                 localW,
                 24
             ),
-            "怎么触发？",
+            "触发机制",
             _subTitle
         );
 
         cy +=
             27f;
 
-        GUI.Box(
-            new Rect(
-                localX,
-                cy,
-                localW,
-                conditionHeight
-            ),
-            ""
-        );
+        if (
+            node.TriggerBranches.Count
+            ==
+            0
+        )
+        {
+            GUI.Label(
+                new Rect(
+                    localX,
+                    cy,
+                    localW,
+                    44
+                ),
+                "没有解析到可展示的触发分支。",
+                _body
+            );
 
-        GUI.Label(
-            new Rect(
-                localX + 9,
-                cy + 7,
-                localW - 18,
-                conditionHeight - 14
-            ),
-            condition,
-            _body
-        );
+            cy +=
+                48f;
+        }
+        else
+        {
+            for (
+                int i = 0;
+                i
+                <
+                node.TriggerBranches.Count;
+                i++
+            )
+            {
+                var branch =
+                    node.TriggerBranches[i];
+
+                string branchKey =
+                    BuildTriggerBranchKey(
+                        node,
+                        branch,
+                        i
+                    );
+
+                bool expanded =
+                    _expandedTriggerBranches.Contains(
+                        branchKey
+                    );
+
+                var state =
+                    EvaluateTriggerBranch(
+                        branch,
+                        out var rows
+                    );
+
+                var buttonRect =
+                    new Rect(
+                        localX,
+                        cy,
+                        localW,
+                        38
+                    );
+
+                string arrow =
+                    expanded
+                        ?
+                        "▼"
+                        :
+                        "▶";
+
+                if (
+                    GUI.Button(
+                        buttonRect,
+                        $"{arrow} {branch.Name}",
+                        _wrapButton
+                    )
+                )
+                {
+                    if (
+                        expanded
+                    )
+                    {
+                        _expandedTriggerBranches.Remove(
+                            branchKey
+                        );
+                    }
+                    else
+                    {
+                        _expandedTriggerBranches.Add(
+                            branchKey
+                        );
+                    }
+                }
+
+                DrawConditionStateIcon(
+                    new Rect(
+                        localX
+                        +
+                        localW
+                        -
+                        34f,
+                        cy + 7f,
+                        24f,
+                        24f
+                    ),
+                    state
+                );
+
+                cy +=
+                    42f;
+
+                if (
+                    expanded
+                )
+                {
+                    DrawExpandedTriggerBranch(
+                        branch,
+                        rows,
+                        localX + 8f,
+                        ref cy,
+                        localW - 16f
+                    );
+
+                    cy +=
+                        8f;
+                }
+            }
+        }
 
         cy +=
-            conditionHeight
-            +
-            14f;
+            10f;
 
         // =========================
-        // 接下来会怎样
+        // 节点走向
         // =========================
         if (
             outcomeHeight > 0
@@ -2203,7 +2167,13 @@ public sealed class GuideOverlay : MonoBehaviour
                     localW,
                     24
                 ),
-                "接下来会怎样？",
+                node.Kind
+                ==
+                NodeKind.Rite
+                    ?
+                    "仪式走向"
+                    :
+                    "事件走向",
                 _subTitle
             );
 
@@ -2329,8 +2299,6 @@ public sealed class GuideOverlay : MonoBehaviour
         }
         else
         {
-            // 有了滚动以后，不再只显示前 6 条。
-            // 所有后续分支都可以在右侧滚动查看。
             foreach (
                 var link
                 in
@@ -2367,6 +2335,1142 @@ public sealed class GuideOverlay : MonoBehaviour
         }
 
         GUI.EndScrollView();
+    }
+
+    private static float EstimateTriggerMechanismHeight(
+        GuideNode node
+    )
+    {
+        float height =
+            27f;
+
+        if (
+            node.TriggerBranches.Count
+            ==
+            0
+        )
+        {
+            return
+                height
+                +
+                52f;
+        }
+
+        for (
+            int i = 0;
+            i
+            <
+            node.TriggerBranches.Count;
+            i++
+        )
+        {
+            var branch =
+                node.TriggerBranches[i];
+
+            height +=
+                42f;
+
+            string key =
+                BuildTriggerBranchKey(
+                    node,
+                    branch,
+                    i
+                );
+
+            if (
+                _expandedTriggerBranches.Contains(
+                    key
+                )
+            )
+            {
+                EvaluateTriggerBranch(
+                    branch,
+                    out var rows
+                );
+
+                height +=
+                    EstimateExpandedTriggerBranchHeight(
+                        branch,
+                        rows
+                    )
+                    +
+                    8f;
+            }
+        }
+
+        return
+            height
+            +
+            10f;
+    }
+
+    private static float EstimateExpandedTriggerBranchHeight(
+        GuideTriggerBranch branch,
+        List<ConditionCheckRow> rows
+    )
+    {
+        float height =
+            12f;
+
+        if (
+            branch.SourceId > 0
+            &&
+            !string.IsNullOrWhiteSpace(
+                branch.SourceName
+            )
+        )
+        {
+            height +=
+                27f;
+        }
+
+        height +=
+            22f
+            +
+            EstimateTextHeight(
+                branch.Timing,
+                44f
+            )
+            +
+            8f;
+
+        height +=
+            22f;
+
+        if (
+            rows.Count > 0
+        )
+        {
+            foreach (
+                var row
+                in
+                rows
+            )
+            {
+                height +=
+                    EstimateConditionRowHeight(
+                        row
+                    );
+            }
+        }
+        else
+        {
+            height +=
+                EstimateTextHeight(
+                    branch.HumanCondition,
+                    42f
+                );
+        }
+
+        height +=
+            10f
+            +
+            22f
+            +
+            EstimateTextHeight(
+                branch.Effect,
+                42f
+            )
+            +
+            14f;
+
+        return height;
+    }
+
+    private static float EstimateConditionRowHeight(
+        ConditionCheckRow row
+    )
+    {
+        float textHeight =
+            EstimateTextHeight(
+                row.Text,
+                24f
+            );
+
+        float detailHeight =
+            string.IsNullOrWhiteSpace(
+                row.Detail
+            )
+                ?
+                0f
+                :
+                EstimateTextHeight(
+                    row.Detail,
+                    22f
+                );
+
+        return
+            Math.Max(
+                42f,
+                textHeight
+                +
+                detailHeight
+                +
+                8f
+            );
+    }
+
+    private static void DrawExpandedTriggerBranch(
+        GuideTriggerBranch branch,
+        List<ConditionCheckRow> rows,
+        float x,
+        ref float cy,
+        float w
+    )
+    {
+        float startY =
+            cy;
+
+        float estimated =
+            EstimateExpandedTriggerBranchHeight(
+                branch,
+                rows
+            );
+
+        GUI.Box(
+            new Rect(
+                x,
+                startY,
+                w,
+                estimated
+            ),
+            "",
+            _softBoxStyle
+        );
+
+        float innerX =
+            x + 10f;
+
+        float innerW =
+            w - 20f;
+
+        cy +=
+            10f;
+
+        if (
+            branch.SourceId > 0
+            &&
+            !string.IsNullOrWhiteSpace(
+                branch.SourceName
+            )
+        )
+        {
+            string sourceKind =
+                branch.SourceKind
+                ==
+                NodeKind.Rite
+                    ?
+                    "仪式"
+                    :
+                    "事件";
+
+            string sourceText =
+                $"来源：{sourceKind} · {branch.SourceName}";
+
+            if (
+                !string.IsNullOrWhiteSpace(
+                    branch.SourceContext
+                )
+                &&
+                !string.Equals(
+                    branch.SourceContext,
+                    branch.Name,
+                    StringComparison.Ordinal
+                )
+            )
+            {
+                sourceText +=
+                    $"（{branch.SourceContext}）";
+            }
+
+            GUI.Label(
+                new Rect(
+                    innerX,
+                    cy,
+                    innerW,
+                    24f
+                ),
+                sourceText,
+                _small
+            );
+
+            cy +=
+                27f;
+        }
+
+        GUI.Label(
+            new Rect(
+                innerX,
+                cy,
+                innerW,
+                22f
+            ),
+            "检查阶段",
+            _subTitle
+        );
+
+        cy +=
+            22f;
+
+        float timingHeight =
+            EstimateTextHeight(
+                branch.Timing,
+                44f
+            );
+
+        GUI.Label(
+            new Rect(
+                innerX,
+                cy,
+                innerW,
+                timingHeight
+            ),
+            string.IsNullOrWhiteSpace(
+                branch.Timing
+            )
+                ?
+                "该配置没有单独写出可展示的检查阶段。"
+                :
+                branch.Timing,
+            _body
+        );
+
+        cy +=
+            timingHeight
+            +
+            8f;
+
+        GUI.Label(
+            new Rect(
+                innerX,
+                cy,
+                innerW,
+                22f
+            ),
+            "触发条件",
+            _subTitle
+        );
+
+        cy +=
+            22f;
+
+        if (
+            rows.Count
+            ==
+            0
+        )
+        {
+            float conditionHeight =
+                EstimateTextHeight(
+                    branch.HumanCondition,
+                    42f
+                );
+
+            GUI.Label(
+                new Rect(
+                    innerX,
+                    cy,
+                    innerW,
+                    conditionHeight
+                ),
+                string.IsNullOrWhiteSpace(
+                    branch.HumanCondition
+                )
+                    ?
+                    "没有额外要求。"
+                    :
+                    branch.HumanCondition,
+                _body
+            );
+
+            cy +=
+                conditionHeight;
+        }
+        else
+        {
+            foreach (
+                var row
+                in
+                rows
+            )
+            {
+                float rowHeight =
+                    EstimateConditionRowHeight(
+                        row
+                    );
+
+                DrawConditionStateIcon(
+                    new Rect(
+                        innerX,
+                        cy + 2f,
+                        24f,
+                        24f
+                    ),
+                    row.State
+                );
+
+                GUI.Label(
+                    new Rect(
+                        innerX + 26f,
+                        cy,
+                        innerW - 26f,
+                        rowHeight
+                    ),
+                    string.IsNullOrWhiteSpace(
+                        row.Detail
+                    )
+                        ?
+                        row.Text
+                        :
+                        row.Text
+                        +
+                        "\n"
+                        +
+                        row.Detail,
+                    _body
+                );
+
+                cy +=
+                    rowHeight;
+            }
+        }
+
+        cy +=
+            10f;
+
+        GUI.Label(
+            new Rect(
+                innerX,
+                cy,
+                innerW,
+                22f
+            ),
+            "满足后",
+            _subTitle
+        );
+
+        cy +=
+            22f;
+
+        float effectHeight =
+            EstimateTextHeight(
+                branch.Effect,
+                42f
+            );
+
+        GUI.Label(
+            new Rect(
+                innerX,
+                cy,
+                innerW,
+                effectHeight
+            ),
+            branch.Effect,
+            _body
+        );
+
+        cy +=
+            effectHeight
+            +
+            12f;
+
+        // 用估算值兜底，保证下一块永远不会压上来。
+        cy =
+            Math.Max(
+                cy,
+                startY
+                +
+                estimated
+            );
+    }
+
+    private static string BuildTriggerBranchKey(
+        GuideNode node,
+        GuideTriggerBranch branch,
+        int index
+    )
+    {
+        return
+            node.Id
+            +
+            ":"
+            +
+            index
+            +
+            ":"
+            +
+            branch.SourceId
+            +
+            ":"
+            +
+            branch.Name;
+    }
+
+    private static void DrawConditionStateIcon(
+        Rect rect,
+        ConditionRuntimeState state
+    )
+    {
+        var old =
+            GUI.contentColor;
+
+        GUI.contentColor =
+            state switch
+            {
+                ConditionRuntimeState.Met =>
+                    new Color(
+                        0.35f,
+                        0.90f,
+                        0.42f,
+                        1f
+                    ),
+
+                ConditionRuntimeState.Unmet =>
+                    new Color(
+                        1.00f,
+                        0.35f,
+                        0.35f,
+                        1f
+                    ),
+
+                _ =>
+                    new Color(
+                        0.72f,
+                        0.76f,
+                        0.82f,
+                        1f
+                    )
+            };
+
+        string symbol =
+            state switch
+            {
+                ConditionRuntimeState.Met =>
+                    "✓",
+
+                ConditionRuntimeState.Unmet =>
+                    "✗",
+
+                _ =>
+                    "?"
+            };
+
+        GUI.Label(
+            rect,
+            symbol,
+            _body
+        );
+
+        GUI.contentColor =
+            old;
+    }
+
+    private static ConditionRuntimeState EvaluateTriggerBranch(
+        GuideTriggerBranch branch,
+        out List<ConditionCheckRow> rows
+    )
+    {
+        rows =
+            new List<ConditionCheckRow>();
+
+        if (
+            branch.IsFallback
+        )
+        {
+            rows.Add(
+                new ConditionCheckRow
+                {
+                    State =
+                        ConditionRuntimeState.Unknown,
+                    Text =
+                        branch.HumanCondition,
+                    Detail =
+                        "当前无法从普通事件触发链中可靠判断。"
+                }
+            );
+
+            return
+                ConditionRuntimeState.Unknown;
+        }
+
+        if (
+            string.IsNullOrWhiteSpace(
+                branch.RawCondition
+            )
+        )
+        {
+            rows.Add(
+                new ConditionCheckRow
+                {
+                    State =
+                        ConditionRuntimeState.Met,
+                    Text =
+                        "没有额外条件",
+                    Detail =
+                        "该分支本身没有配置额外 condition。"
+                }
+            );
+
+            return
+                ConditionRuntimeState.Met;
+        }
+
+        try
+        {
+            using var doc =
+                JsonDocument.Parse(
+                    branch.RawCondition
+                );
+
+            return
+                EvaluateConditionElement(
+                    doc.RootElement,
+                    rows,
+                    true
+                );
+        }
+        catch
+        {
+            rows.Add(
+                new ConditionCheckRow
+                {
+                    State =
+                        ConditionRuntimeState.Unknown,
+                    Text =
+                        branch.HumanCondition,
+                    Detail =
+                        "当前无法可靠解析这组条件。"
+                }
+            );
+
+            return
+                ConditionRuntimeState.Unknown;
+        }
+    }
+
+    private static ConditionRuntimeState EvaluateConditionElement(
+        JsonElement element,
+        List<ConditionCheckRow> rows,
+        bool allByDefault
+    )
+    {
+        if (
+            element.ValueKind
+            ==
+            JsonValueKind.Object
+        )
+        {
+            var states =
+                new List<ConditionRuntimeState>();
+
+            foreach (
+                var property
+                in
+                element.EnumerateObject()
+            )
+            {
+                if (
+                    property.Name.Equals(
+                        "all",
+                        StringComparison.OrdinalIgnoreCase
+                    )
+                )
+                {
+                    states.Add(
+                        EvaluateConditionElement(
+                            property.Value,
+                            rows,
+                            true
+                        )
+                    );
+
+                    continue;
+                }
+
+                if (
+                    property.Name.Equals(
+                        "any",
+                        StringComparison.OrdinalIgnoreCase
+                    )
+                )
+                {
+                    states.Add(
+                        EvaluateConditionElement(
+                            property.Value,
+                            rows,
+                            false
+                        )
+                    );
+
+                    continue;
+                }
+
+                states.Add(
+                    EvaluateConditionAtom(
+                        property.Name,
+                        property.Value,
+                        rows
+                    )
+                );
+            }
+
+            return
+                CombineConditionStates(
+                    states,
+                    allByDefault
+                );
+        }
+
+        if (
+            element.ValueKind
+            ==
+            JsonValueKind.Array
+        )
+        {
+            var states =
+                new List<ConditionRuntimeState>();
+
+            foreach (
+                var item
+                in
+                element.EnumerateArray()
+            )
+            {
+                states.Add(
+                    EvaluateConditionElement(
+                        item,
+                        rows,
+                        allByDefault
+                    )
+                );
+            }
+
+            return
+                CombineConditionStates(
+                    states,
+                    allByDefault
+                );
+        }
+
+        return
+            ConditionRuntimeState.Unknown;
+    }
+
+    private static ConditionRuntimeState CombineConditionStates(
+        List<ConditionRuntimeState> states,
+        bool all
+    )
+    {
+        if (
+            states.Count
+            ==
+            0
+        )
+        {
+            return
+                ConditionRuntimeState.Met;
+        }
+
+        if (all)
+        {
+            if (
+                states.Any(
+                    x =>
+                        x
+                        ==
+                        ConditionRuntimeState.Unmet
+                )
+            )
+            {
+                return
+                    ConditionRuntimeState.Unmet;
+            }
+
+            if (
+                states.All(
+                    x =>
+                        x
+                        ==
+                        ConditionRuntimeState.Met
+                )
+            )
+            {
+                return
+                    ConditionRuntimeState.Met;
+            }
+
+            return
+                ConditionRuntimeState.Unknown;
+        }
+
+        if (
+            states.Any(
+                x =>
+                    x
+                    ==
+                    ConditionRuntimeState.Met
+            )
+        )
+        {
+            return
+                ConditionRuntimeState.Met;
+        }
+
+        if (
+            states.All(
+                x =>
+                    x
+                    ==
+                    ConditionRuntimeState.Unmet
+            )
+        )
+        {
+            return
+                ConditionRuntimeState.Unmet;
+        }
+
+        return
+            ConditionRuntimeState.Unknown;
+    }
+
+    private static ConditionRuntimeState EvaluateConditionAtom(
+        string key,
+        JsonElement value,
+        List<ConditionCheckRow> rows
+    )
+    {
+        string human =
+            _db != null
+                ?
+                _db.HumanizeConditionAtom(
+                    key,
+                    value
+                )
+                :
+                key;
+
+        var counterMatch =
+            Regex.Match(
+                key,
+                @"^counter\.(\d+)(>=|<=|>|<|=)?$"
+            );
+
+        if (
+            counterMatch.Success
+            &&
+            value.ValueKind
+            ==
+            JsonValueKind.Number
+            &&
+            value.TryGetInt32(
+                out var target
+            )
+        )
+        {
+            try
+            {
+                var player =
+                    Common.Player;
+
+                if (
+                    player
+                    ==
+                    null
+                )
+                {
+                    rows.Add(
+                        new ConditionCheckRow
+                        {
+                            State =
+                                ConditionRuntimeState.Unknown,
+                            Text =
+                                human,
+                            Detail =
+                                "当前不在可读取的游戏局内。"
+                        }
+                    );
+
+                    return
+                        ConditionRuntimeState.Unknown;
+                }
+
+                int counterId =
+                    int.Parse(
+                        counterMatch
+                            .Groups[1]
+                            .Value
+                    );
+
+                string op =
+                    counterMatch
+                        .Groups[2]
+                        .Success
+                            ?
+                            counterMatch
+                                .Groups[2]
+                                .Value
+                            :
+                            "=";
+
+                int current =
+                    PlayerExtensions.GetCounter(
+                        player,
+                        counterId
+                    );
+
+                bool met =
+                    CompareCounter(
+                        current,
+                        target,
+                        op
+                    );
+
+                rows.Add(
+                    new ConditionCheckRow
+                    {
+                        State =
+                            met
+                                ?
+                                ConditionRuntimeState.Met
+                                :
+                                ConditionRuntimeState.Unmet,
+                        Text =
+                            human,
+                        Detail =
+                            BuildCounterProgressText(
+                                current,
+                                target,
+                                op,
+                                met
+                            )
+                    }
+                );
+
+                return
+                    met
+                        ?
+                        ConditionRuntimeState.Met
+                        :
+                        ConditionRuntimeState.Unmet;
+            }
+            catch
+            {
+                rows.Add(
+                    new ConditionCheckRow
+                    {
+                        State =
+                            ConditionRuntimeState.Unknown,
+                        Text =
+                            human,
+                        Detail =
+                            "这个计数条件当前读取失败。"
+                    }
+                );
+
+                return
+                    ConditionRuntimeState.Unknown;
+            }
+        }
+
+        if (
+            (
+                key.Equals(
+                    "rite",
+                    StringComparison.OrdinalIgnoreCase
+                )
+                ||
+                key.Equals(
+                    "!rite",
+                    StringComparison.OrdinalIgnoreCase
+                )
+            )
+            &&
+            value.ValueKind
+            ==
+            JsonValueKind.Number
+            &&
+            value.TryGetInt32(
+                out var riteId
+            )
+        )
+        {
+            bool shouldExist =
+                !key.StartsWith(
+                    "!",
+                    StringComparison.Ordinal
+                );
+
+            bool exists =
+                _runtimeRiteIds.Contains(
+                    riteId
+                );
+
+            bool met =
+                shouldExist
+                    ?
+                    exists
+                    :
+                    !exists;
+
+            string riteName =
+                _db != null
+                &&
+                _db.RiteNames.TryGetValue(
+                    riteId,
+                    out var name
+                )
+                    ?
+                    $"《{name}》"
+                    :
+                    "对应仪式";
+
+            rows.Add(
+                new ConditionCheckRow
+                {
+                    State =
+                        met
+                            ?
+                            ConditionRuntimeState.Met
+                            :
+                            ConditionRuntimeState.Unmet,
+                    Text =
+                        human,
+                    Detail =
+                        $"当前：{riteName}{(exists ? "存在于地图" : "不在地图上")}。"
+                }
+            );
+
+            return
+                met
+                    ?
+                    ConditionRuntimeState.Met
+                    :
+                    ConditionRuntimeState.Unmet;
+        }
+
+        rows.Add(
+            new ConditionCheckRow
+            {
+                State =
+                    ConditionRuntimeState.Unknown,
+                Text =
+                    string.IsNullOrWhiteSpace(
+                        human
+                    )
+                        ?
+                        "存在一个当前尚未支持实时读取的条件。"
+                        :
+                        human,
+                Detail =
+                    "当前暂时无法可靠读取这个条件，所以不显示错误的对勾或叉号。"
+            }
+        );
+
+        return
+            ConditionRuntimeState.Unknown;
+    }
+
+    private static bool CompareCounter(
+        int current,
+        int target,
+        string op
+    )
+    {
+        return op switch
+        {
+            ">=" =>
+                current >= target,
+
+            "<=" =>
+                current <= target,
+
+            ">" =>
+                current > target,
+
+            "<" =>
+                current < target,
+
+            "=" =>
+                current == target,
+
+            _ =>
+                false
+        };
+    }
+
+    private static string BuildCounterProgressText(
+        int current,
+        int target,
+        string op,
+        bool met
+    )
+    {
+        string requirement =
+            op
+            +
+            target;
+
+        string progress =
+            $"当前：{current}；要求：{requirement}。";
+
+        if (met)
+        {
+            return
+                progress
+                +
+                " 已满足。";
+        }
+
+        if (
+            op
+            ==
+            ">="
+        )
+        {
+            return
+                progress
+                +
+                $" 还差：{Math.Max(0, target - current)}。";
+        }
+
+        if (
+            op
+            ==
+            ">"
+        )
+        {
+            return
+                progress
+                +
+                $" 还差：{Math.Max(0, target + 1 - current)}。";
+        }
+
+        if (
+            op
+            ==
+            "<="
+        )
+        {
+            return
+                progress
+                +
+                $" 当前已超过上限 {Math.Max(0, current - target)}。";
+        }
+
+        if (
+            op
+            ==
+            "<"
+        )
+        {
+            return
+                progress
+                +
+                $" 当前已超过允许范围 {Math.Max(0, current - (target - 1))}。";
+        }
+
+        return
+            progress;
     }
 
     private static float EstimateTextHeight(
