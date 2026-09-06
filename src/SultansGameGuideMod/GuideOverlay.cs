@@ -532,6 +532,299 @@ public sealed class GuideOverlay : MonoBehaviour
     // ============================================================
 
     [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool TryGetRuntimeRiteId(
+        object riteController,
+        out int riteId
+    )
+    {
+        riteId = 0;
+
+        string[] directNames =
+        {
+            "riteId",
+            "rite_id",
+            "id",
+            "RiteId",
+            "RiteID"
+        };
+
+        if (
+            TryReadNumericMember(
+                riteController,
+                directNames,
+                out riteId
+            )
+        )
+        {
+            return true;
+        }
+
+        string[] nestedNames =
+        {
+            "rite",
+            "Rite",
+            "riteConfig",
+            "RiteConfig",
+            "config",
+            "Config",
+            "riteNode",
+            "RiteNode"
+        };
+
+        foreach (
+            string nestedName
+            in
+            nestedNames
+        )
+        {
+            object? nested =
+                TryReadObjectMember(
+                    riteController,
+                    nestedName
+                );
+
+            if (
+                nested == null
+            )
+            {
+                continue;
+            }
+
+            if (
+                TryReadNumericMember(
+                    nested,
+                    directNames,
+                    out riteId
+                )
+            )
+            {
+                return true;
+            }
+
+            foreach (
+                string innerName
+                in
+                nestedNames
+            )
+            {
+                object? inner =
+                    TryReadObjectMember(
+                        nested,
+                        innerName
+                    );
+
+                if (
+                    inner != null
+                    &&
+                    TryReadNumericMember(
+                        inner,
+                        directNames,
+                        out riteId
+                    )
+                )
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryReadNumericMember(
+        object target,
+        IEnumerable<string> candidateNames,
+        out int value
+    )
+    {
+        value = 0;
+
+        Type type =
+            target.GetType();
+
+        var flags =
+            System.Reflection.BindingFlags.Instance
+            |
+            System.Reflection.BindingFlags.Public
+            |
+            System.Reflection.BindingFlags.NonPublic;
+
+        foreach (
+            string name
+            in
+            candidateNames
+        )
+        {
+            try
+            {
+                var property =
+                    type.GetProperty(
+                        name,
+                        flags
+                    );
+
+                if (
+                    property != null
+                    &&
+                    TryConvertPositiveInt(
+                        property.GetValue(
+                            target
+                        ),
+                        out value
+                    )
+                )
+                {
+                    return true;
+                }
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                var field =
+                    type.GetField(
+                        name,
+                        flags
+                    );
+
+                if (
+                    field != null
+                    &&
+                    TryConvertPositiveInt(
+                        field.GetValue(
+                            target
+                        ),
+                        out value
+                    )
+                )
+                {
+                    return true;
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        return false;
+    }
+
+    private static object? TryReadObjectMember(
+        object target,
+        string name
+    )
+    {
+        Type type =
+            target.GetType();
+
+        var flags =
+            System.Reflection.BindingFlags.Instance
+            |
+            System.Reflection.BindingFlags.Public
+            |
+            System.Reflection.BindingFlags.NonPublic;
+
+        try
+        {
+            var property =
+                type.GetProperty(
+                    name,
+                    flags
+                );
+
+            if (
+                property != null
+            )
+            {
+                return property.GetValue(
+                    target
+                );
+            }
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            var field =
+                type.GetField(
+                    name,
+                    flags
+                );
+
+            if (
+                field != null
+            )
+            {
+                return field.GetValue(
+                    target
+                );
+            }
+        }
+        catch
+        {
+        }
+
+        return null;
+    }
+
+    private static bool TryConvertPositiveInt(
+        object? raw,
+        out int value
+    )
+    {
+        value = 0;
+
+        if (
+            raw == null
+        )
+        {
+            return false;
+        }
+
+        try
+        {
+            long parsed =
+                Convert.ToInt64(
+                    raw
+                );
+
+            if (
+                parsed > 0
+                &&
+                parsed <= int.MaxValue
+            )
+            {
+                value =
+                    (int)parsed;
+
+                return true;
+            }
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            return
+                int.TryParse(
+                    raw.ToString(),
+                    out value
+                )
+                &&
+                value > 0;
+        }
+        catch
+        {
+            value = 0;
+            return false;
+        }
+    }
+
     private static void RefreshRuntimeContext(
         bool force
     )
@@ -575,25 +868,23 @@ public sealed class GuideOverlay : MonoBehaviour
                     {
                         if (
                             riteController == null
-                            ||
-                            riteController.rite == null
                         )
                         {
                             continue;
                         }
 
-                        var idObject = riteController.rite.rite_id;
-
-                        if (idObject == null)
+                        if (
+                            TryGetRuntimeRiteId(
+                                riteController,
+                                out int riteId
+                            )
+                            &&
+                            riteId > 0
+                        )
                         {
-                            continue;
-                        }
-
-                        int riteId = Convert.ToInt32(idObject.ToString());
-
-                        if (riteId > 0)
-                        {
-                            currentRiteIds.Add(riteId);
+                            currentRiteIds.Add(
+                                riteId
+                            );
                         }
                     }
                     catch
@@ -806,7 +1097,7 @@ public sealed class GuideOverlay : MonoBehaviour
                 330,
                 22
             ),
-            "v0.4.77 · 当前仪式+语义审计",
+            "v0.4.78 · 运行时ID兼容",
             _small
         );
 
