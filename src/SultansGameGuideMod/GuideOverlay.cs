@@ -77,13 +77,11 @@ public sealed class GuideOverlay : MonoBehaviour
     private static GUIStyle? _boxStyle;
     private static GUIStyle? _softBoxStyle;
     private static GUIStyle? _activeButtonStyle;
-    private static GUIStyle? _riteButtonStyle;
     private static GUIStyle? _selectedButtonStyle;
 
     private static Texture2D? _panelTex;
     private static Texture2D? _softTex;
     private static Texture2D? _activeTex;
-    private static Texture2D? _riteTex;
     private static Texture2D? _selectedTex;
 
     private const int ResultsPerPage = 11;
@@ -910,7 +908,7 @@ public sealed class GuideOverlay : MonoBehaviour
                 330,
                 22
             ),
-            "v0.4.81 · 仪式置顶+选中强化",
+            "v0.4.81 · 选中高亮",
             _small
         );
 
@@ -1331,85 +1329,37 @@ public sealed class GuideOverlay : MonoBehaviour
         float cy =
             0f;
 
-        var orderedItems =
-            _runtimeNodes
-                .OrderBy(
-                    item =>
-                        item.Node.Kind
-                        ==
-                        NodeKind.Rite
-                            ?
-                            0
-                            :
-                            1
-                )
-                .ThenByDescending(
-                    item =>
-                        item.IsActive
-                )
-                .ThenBy(
-                    item =>
-                        item.Node.Name
-                )
-                .ToList();
-
         foreach (
             var item
             in
-            orderedItems
+            _runtimeNodes
         )
         {
-            bool selected =
+            string marker =
                 item.Node.Id
                 ==
-                _selectedId;
-
-            string marker =
-                selected
+                _selectedId
                     ?
-                    "▶▶ "
-                    :
-                    (
-                        item.Node.Kind
-                        ==
-                        NodeKind.Rite
-                            ?
-                            "◆ "
-                            :
-                            ""
-                    );
-
-            string kindPrefix =
-                item.Node.Kind
-                ==
-                NodeKind.Rite
-                    ?
-                    "[地图仪式] "
+                    "▶ "
                     :
                     "";
 
             string label =
-                $"{marker}{kindPrefix}{item.Prefix}  {item.Node.Name}";
+                $"{marker}{item.Prefix}  {item.Node.Name}";
 
             GUIStyle style =
-                selected
+                item.Node.Id
+                ==
+                _selectedId
                     ?
                     _selectedButtonStyle!
                     :
                     (
-                        item.Node.Kind
-                        ==
-                        NodeKind.Rite
+                        item.IsActive
                             ?
-                            _riteButtonStyle!
+                            _activeButtonStyle!
                             :
-                            (
-                                item.IsActive
-                                    ?
-                                    _activeButtonStyle!
-                                    :
-                                    _wrapButton!
-                            )
+                            _wrapButton!
                     );
 
             if (
@@ -1526,6 +1476,15 @@ public sealed class GuideOverlay : MonoBehaviour
             string label =
                 $"{marker}[{KindName(node.Kind)}] {node.Name}";
 
+            GUIStyle searchStyle =
+                node.Id
+                ==
+                _selectedId
+                    ?
+                    _selectedButtonStyle!
+                    :
+                    _wrapButton!;
+
             if (
                 GUI.Button(
                     new Rect(
@@ -1535,7 +1494,7 @@ public sealed class GuideOverlay : MonoBehaviour
                         rowH - 4
                     ),
                     label,
-                    _wrapButton
+                    searchStyle
                 )
             )
             {
@@ -2424,33 +2383,6 @@ public sealed class GuideOverlay : MonoBehaviour
         }
 
         if (
-            _riteTex
-            ==
-            null
-        )
-        {
-            _riteTex =
-                new Texture2D(
-                    1,
-                    1
-                );
-
-            // 地图/桌面仪式：偏暖的深金棕背景
-            _riteTex.SetPixel(
-                0,
-                0,
-                new Color(
-                    0.25f,
-                    0.20f,
-                    0.09f,
-                    1.00f
-                )
-            );
-
-            _riteTex.Apply();
-        }
-
-        if (
             _selectedTex
             ==
             null
@@ -2462,14 +2394,14 @@ public sealed class GuideOverlay : MonoBehaviour
                     1
                 );
 
-            // 当前选中：更明亮的蓝色，和普通 active 明显拉开
+            // 选中项使用明显的暖金棕色，与“当前已激活”的蓝色区分。
             _selectedTex.SetPixel(
                 0,
                 0,
                 new Color(
-                    0.08f,
-                    0.42f,
-                    0.62f,
+                    0.48f,
+                    0.27f,
+                    0.07f,
                     1.00f
                 )
             );
@@ -2727,71 +2659,6 @@ public sealed class GuideOverlay : MonoBehaviour
         }
 
         if (
-            _riteButtonStyle
-            ==
-            null
-        )
-        {
-            _riteButtonStyle =
-                new GUIStyle();
-
-            _riteButtonStyle.fontSize =
-                12;
-
-            _riteButtonStyle.fontStyle =
-                FontStyle.Bold;
-
-            _riteButtonStyle.wordWrap =
-                true;
-
-            _riteButtonStyle.alignment =
-                TextAnchor.MiddleLeft;
-
-            _riteButtonStyle.padding =
-                new RectOffset(
-                    9,
-                    8,
-                    4,
-                    4
-                );
-
-            _riteButtonStyle
-                .normal
-                .background =
-                    _riteTex;
-
-            _riteButtonStyle
-                .hover
-                .background =
-                    _activeTex;
-
-            _riteButtonStyle
-                .active
-                .background =
-                    _activeTex;
-
-            _riteButtonStyle
-                .normal
-                .textColor =
-                    new Color(
-                        1.00f,
-                        0.92f,
-                        0.62f,
-                        1f
-                    );
-
-            _riteButtonStyle
-                .hover
-                .textColor =
-                    Color.white;
-
-            _riteButtonStyle
-                .active
-                .textColor =
-                    Color.white;
-        }
-
-        if (
             _selectedButtonStyle
             ==
             null
@@ -2801,7 +2668,7 @@ public sealed class GuideOverlay : MonoBehaviour
                 new GUIStyle();
 
             _selectedButtonStyle.fontSize =
-                13;
+                12;
 
             _selectedButtonStyle.fontStyle =
                 FontStyle.Bold;
@@ -2814,7 +2681,7 @@ public sealed class GuideOverlay : MonoBehaviour
 
             _selectedButtonStyle.padding =
                 new RectOffset(
-                    11,
+                    8,
                     8,
                     4,
                     4
@@ -2838,7 +2705,12 @@ public sealed class GuideOverlay : MonoBehaviour
             _selectedButtonStyle
                 .normal
                 .textColor =
-                    Color.white;
+                    new Color(
+                        1.00f,
+                        0.93f,
+                        0.72f,
+                        1.00f
+                    );
 
             _selectedButtonStyle
                 .hover
