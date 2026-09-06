@@ -721,7 +721,7 @@ public sealed class GuideOverlay : MonoBehaviour
                 330,
                 22
             ),
-            "v0.4.7a · 长文本布局修复",
+            "v0.4.71 · 长文本布局修复",
             _small
         );
 
