@@ -270,7 +270,16 @@ public sealed class GuideOverlay : MonoBehaviour
             );
 
         UpdateInputBlockerRect(
-            _panel
+            _dragging
+                ?
+                new Rect(
+                    0f,
+                    0f,
+                    Screen.width,
+                    Screen.height
+                )
+                :
+                _panel
         );
 
         DrawPanel();
@@ -278,7 +287,11 @@ public sealed class GuideOverlay : MonoBehaviour
         // IMGUI 自己的鼠标事件也吃掉。
         // 注意放在 DrawPanel 之后，否则攻略窗自己的按钮也收不到点击。
         if (
-            mouseInside
+            (
+                mouseInside
+                ||
+                _dragging
+            )
             &&
             e != null
             &&
@@ -862,7 +875,7 @@ public sealed class GuideOverlay : MonoBehaviour
                 330,
                 22
             ),
-            "v0.4.73 · 区域点击拦截",
+            "v0.4.74 · 拖动隔离",
             _small
         );
 
@@ -2137,6 +2150,15 @@ public sealed class GuideOverlay : MonoBehaviour
                     _panel.y
                 );
 
+            UpdateInputBlockerRect(
+                new Rect(
+                    0f,
+                    0f,
+                    Screen.width,
+                    Screen.height
+                )
+            );
+
             e.Use();
         }
         else if (
@@ -2163,10 +2185,18 @@ public sealed class GuideOverlay : MonoBehaviour
             e.type
             ==
             EventType.MouseUp
+            &&
+            _dragging
         )
         {
             _dragging =
                 false;
+
+            UpdateInputBlockerRect(
+                _panel
+            );
+
+            e.Use();
         }
     }
 
