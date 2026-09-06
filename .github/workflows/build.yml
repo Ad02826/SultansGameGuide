@@ -3,7 +3,7 @@ name: Build SultansGameGuide MOD
 on:
   workflow_dispatch:
   push:
-    ranches: [ "main", "master", "diagnostic" ]
+    ranches: [ "main", "master"]
     paths:
       - "src/**"
       - "NuGet.config"
