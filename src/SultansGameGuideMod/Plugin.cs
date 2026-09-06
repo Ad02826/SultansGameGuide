@@ -6,7 +6,7 @@ namespace SultansGameGuide;
 [BepInPlugin(
     "wharman.sultansgame.guide",
     "苏丹的游戏·攻略助手",
-    "0.5.1"
+    "0.5.2"
 )]
 public sealed class Plugin : BasePlugin
 {
@@ -16,7 +16,7 @@ public sealed class Plugin : BasePlugin
             AddComponent<GuideOverlay>();
 
         Log.LogInfo(
-            "苏丹攻略助手 0.5.1 已加载：剧情关系图重构 + 真实地图仪式"
+            "苏丹攻略助手 0.5.2 已加载：剧情关系图 + 早期错误审计清理"
         );
 
         Log.LogInfo(

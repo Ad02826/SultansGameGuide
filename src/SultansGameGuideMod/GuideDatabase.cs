@@ -13,12 +13,10 @@ public sealed class GuideDatabase
     public readonly Dictionary<int, string> CardTitles = new();
 
     public readonly Dictionary<int, string> CounterHints = new();
-    public readonly Dictionary<string, string> ConditionHints =
-        new(StringComparer.OrdinalIgnoreCase);
 
-    // 同一个机器键出现不同策划注释时，不再使用“第一条注释”做全局翻译。
-    private readonly HashSet<string> AmbiguousConditionHints =
-        new(StringComparer.OrdinalIgnoreCase);
+    // 同一个 counter ID 在不同配置旁出现不同注释时，不把任何一条当成全局语义。
+    // 这避免了早期“第一条注释污染其他剧情”的问题。
+    private readonly HashSet<int> AmbiguousCounterHints = new();
 
     public readonly Dictionary<int, string> RiteNames = new();
     public readonly Dictionary<int, string> EventNames = new();
@@ -56,8 +54,7 @@ public sealed class GuideDatabase
         CardTitles.Clear();
 
         CounterHints.Clear();
-        ConditionHints.Clear();
-        AmbiguousConditionHints.Clear();
+        AmbiguousCounterHints.Clear();
 
         RiteNames.Clear();
         EventNames.Clear();
@@ -242,44 +239,8 @@ public sealed class GuideDatabase
                         continue;
                     }
 
-                    // 记录“具体机器键 -> 策划注释”
-                    // 例如 table_have.2000728 -> 任一正教的理念闲置
-                    var keyMatch =
-                        Regex.Match(
-                            code,
-                            "\"([^\"]+)\"\\s*:"
-                        );
-
-                    if (keyMatch.Success)
-                    {
-                        string machineKey =
-                            keyMatch
-                                .Groups[1]
-                                .Value;
-
-                        if (
-                            ConditionHints.TryGetValue(
-                                machineKey,
-                                out var existingHint
-                            )
-                        )
-                        {
-                            if (
-                                !string.Equals(
-                                    CleanupComment(existingHint),
-                                    CleanupComment(comment),
-                                    StringComparison.Ordinal
-                                )
-                            )
-                            {
-                                AmbiguousConditionHints.Add(machineKey);
-                            }
-                        }
-                        else
-                        {
-                            ConditionHints[machineKey] = comment;
-                        }
-                    }
+                    // 普通机器键的行尾注释只属于其所在配置上下文。
+                    // 不再跨文件建立 machineKey -> comment 全局映射。
 
                     foreach (
                         Match match
@@ -318,12 +279,30 @@ public sealed class GuideDatabase
                                 idText,
                                 out var id
                             )
-                            &&
-                            !CounterHints.ContainsKey(id)
                         )
                         {
-                            CounterHints[id] =
-                                comment;
+                            if (
+                                CounterHints.TryGetValue(
+                                    id,
+                                    out var existingCounterHint
+                                )
+                            )
+                            {
+                                if (
+                                    !string.Equals(
+                                        CleanupComment(existingCounterHint),
+                                        CleanupComment(comment),
+                                        StringComparison.Ordinal
+                                    )
+                                )
+                                {
+                                    AmbiguousCounterHints.Add(id);
+                                }
+                            }
+                            else
+                            {
+                                CounterHints[id] = comment;
+                            }
                         }
                     }
                 }
@@ -531,12 +510,6 @@ public sealed class GuideDatabase
                 node.Links.AddRange(
                     distinct
                 );
-
-                node.HumanOutcome =
-                    BuildHumanOutcome(
-                        root,
-                        node
-                    );
 
                 Nodes[id] =
                     node;
@@ -1249,34 +1222,6 @@ public sealed class GuideDatabase
             ids.Add(id);
         }
 
-        string? semanticHint =
-            node.Children
-                .Select(
-                    child =>
-                        !AmbiguousConditionHints.Contains(
-                            child.Key.TrimStart('!')
-                        )
-                        &&
-                        ConditionHints.TryGetValue(
-                            child.Key.TrimStart('!'),
-                            out var hint
-                        )
-                            ?
-                            hint
-                            :
-                            null
-                )
-                .FirstOrDefault(
-                    hint =>
-                        hint != null
-                        &&
-                        (
-                            hint.Contains("任一")
-                            ||
-                            hint.Contains("任意")
-                        )
-                );
-
         var names =
             ids
                 .Select(
@@ -1288,25 +1233,6 @@ public sealed class GuideDatabase
             CommonCardCategory(
                 ids
             );
-
-        if (
-            !string.IsNullOrWhiteSpace(
-                semanticHint
-            )
-        )
-        {
-            string natural =
-                NaturalizeGroupHint(
-                    semanticHint!
-                );
-
-            text =
-                natural
-                +
-                $" 可用的包括：{JoinNames(names)}。";
-
-            return true;
-        }
 
         if (
             !string.IsNullOrWhiteSpace(
@@ -1342,9 +1268,11 @@ public sealed class GuideDatabase
             "__value__"
         )
         {
-            // 单独出现裸值时无法确定语义。
-            // 不把 JSON 原样扔给玩家。
-            return "还存在一个隐藏剧情条件";
+            // 单独出现裸值时无法确定语义。明确标记为待适配，不伪造游戏机制。
+            return
+                "待适配条件：值="
+                +
+                value;
         }
 
         bool negated =
@@ -1543,6 +1471,8 @@ public sealed class GuideDatabase
                         "=";
 
             string hint =
+                !AmbiguousCounterHints.Contains(id)
+                &&
                 CounterHints.TryGetValue(
                     id,
                     out var humanHint
@@ -1553,6 +1483,7 @@ public sealed class GuideDatabase
                     "";
 
             return HumanizeCounter(
+                id,
                 hint,
                 op,
                 value
@@ -1618,32 +1549,19 @@ public sealed class GuideDatabase
             }
         }
 
-        // 如果策划已经写了注释，优先使用注释而不是机器字段。
-        string originalKey =
-            atom.Key.TrimStart('!');
-
-        if (
-            !AmbiguousConditionHints.Contains(
-                originalKey
-            )
-            &&
-            ConditionHints.TryGetValue(
-                originalKey,
-                out var comment
-            )
-        )
-        {
-            return NaturalizeComment(
-                comment,
-                negated
-            );
-        }
-
-        // 最后一层兜底也绝不展示 JSON / DSL。
-        return "还存在一个隐藏剧情条件";
+        // 未识别字段必须显式暴露为待适配条件；不再借用其他文件的注释猜语义。
+        return
+            "待适配条件："
+            +
+            atom.Key
+            +
+            "="
+            +
+            value;
     }
 
     private string HumanizeCounter(
+        int id,
         string hint,
         string op,
         string value
@@ -1668,31 +1586,8 @@ public sealed class GuideDatabase
             hint.Length == 0
         )
         {
-            if (
-                trueLike
-                &&
-                (
-                    op == ">="
-                    ||
-                    op == "="
-                    ||
-                    op == ">"
-                )
-            )
-            {
-                return "某个前置剧情已经完成";
-            }
-
-            if (
-                trueLike
-                &&
-                op == "<"
-            )
-            {
-                return "某个后续剧情还没有发生";
-            }
-
-            return "还需要满足一个隐藏剧情进度";
+            return
+                $"待适配计数条件：counter.{id}{op}{value}";
         }
 
         bool hintAlreadyNegative =
@@ -1927,87 +1822,6 @@ public sealed class GuideDatabase
     {
         // 中文这里不强行加“完成/触发”，避免：
         // “已经完成和正教决裂”这种生硬表达。
-        return text;
-    }
-
-    private static string NaturalizeComment(
-        string comment,
-        bool negated
-    )
-    {
-        comment =
-            CleanupComment(
-                comment
-            );
-
-        comment =
-            comment.Replace(
-                "闲置",
-                "当前可用"
-            );
-
-        if (
-            negated
-            &&
-            !ContainsNegativeMeaning(
-                comment
-            )
-        )
-        {
-            return
-                "不能满足："
-                +
-                comment;
-        }
-
-        return comment;
-    }
-
-    private static string NaturalizeGroupHint(
-        string hint
-    )
-    {
-        string text =
-            CleanupComment(
-                hint
-            );
-
-        text =
-            text.Replace(
-                "任一",
-                "任意一种"
-            );
-
-        text =
-            text.Replace(
-                "任意一个",
-                "任意一种"
-            );
-
-        text =
-            text.Replace(
-                "闲置",
-                "当前可用"
-            );
-
-        if (
-            !text.EndsWith("即可")
-            &&
-            !text.EndsWith("。")
-        )
-        {
-            text +=
-                "即可";
-        }
-
-        if (
-            !text.EndsWith("。")
-        )
-        {
-            text +=
-                "。";
-        }
-
         return text;
     }
 
@@ -3097,9 +2911,6 @@ public sealed class GuideDatabase
             node.IncomingRelations.Clear();
             node.OutgoingRelations.Clear();
 
-            // 旧版详情页曾使用 TriggerBranches；
-            // 新版关系图不再依赖它。
-            node.TriggerBranches.Clear();
         }
 
         foreach (
@@ -3399,123 +3210,6 @@ public sealed class GuideDatabase
             "在对应剧情分支结算时执行。";
     }
 
-    private static string BuildEventTriggerBranchName(
-        GuideNode source,
-        GuideOutgoingTrigger edge
-    )
-    {
-        if (
-            !string.IsNullOrWhiteSpace(
-                edge.Label
-            )
-        )
-        {
-            return
-                $"{source.Name} · {edge.Label}";
-        }
-
-        return
-            source.Name;
-    }
-
-    private static string BuildRiteTriggerBranchName(
-        GuideNode source,
-        GuideNode target,
-        GuideOutgoingTrigger edge
-    )
-    {
-        if (
-            source.Kind
-            ==
-            NodeKind.Event
-        )
-        {
-            if (
-                RawConditionHasRiteState(
-                    edge.RawCondition,
-                    target.Id,
-                    false
-                )
-            )
-            {
-                return
-                    "首次出现";
-            }
-
-            if (
-                RawConditionHasRiteState(
-                    edge.RawCondition,
-                    target.Id,
-                    true
-                )
-            )
-            {
-                return
-                    "后续刷新";
-            }
-        }
-
-        if (
-            !string.IsNullOrWhiteSpace(
-                edge.Label
-            )
-        )
-        {
-            return
-                edge.Label;
-        }
-
-        if (
-            !string.Equals(
-                source.Name,
-                target.Name,
-                StringComparison.OrdinalIgnoreCase
-            )
-        )
-        {
-            return
-                source.Name;
-        }
-
-        return
-            source.Kind
-            ==
-            NodeKind.Event
-                ?
-                "事件触发"
-                :
-                "仪式分支";
-    }
-
-    private static bool RawConditionHasRiteState(
-        string raw,
-        int riteId,
-        bool exists
-    )
-    {
-        if (
-            string.IsNullOrWhiteSpace(
-                raw
-            )
-        )
-        {
-            return false;
-        }
-
-        string key =
-            exists
-                ?
-                "rite"
-                :
-                "!rite";
-
-        return
-            Regex.IsMatch(
-                raw,
-                $"\\\"{Regex.Escape(key)}\\\"\\s*:\\s*{riteId}(?:\\D|$)"
-            );
-    }
-
     private static string DisplayNode(
         GuideNode node
     )
@@ -3533,147 +3227,6 @@ public sealed class GuideDatabase
     // ============================================================
     // 后续事件 / 仪式：翻译成“接下来会怎样”
     // ============================================================
-
-    private string BuildHumanOutcome(
-        JsonElement root,
-        GuideNode node
-    )
-    {
-        var pieces =
-            new List<string>();
-
-        string? prompt =
-            FindFirstPromptText(
-                root
-            );
-
-        if (
-            !string.IsNullOrWhiteSpace(
-                prompt
-            )
-        )
-        {
-            pieces.Add(
-                StripRichText(
-                    prompt!
-                )
-            );
-        }
-
-        var direct =
-            node.Links
-                .Take(4)
-                .Select(
-                    DescribeTransition
-                )
-                .Distinct()
-                .ToList();
-
-        if (
-            direct.Count > 0
-        )
-        {
-            pieces.Add(
-                string.Join(
-                    "\n",
-                    direct.Select(
-                        x =>
-                            "• "
-                            +
-                            x
-                    )
-                )
-            );
-        }
-
-        return
-            string.Join(
-                "\n",
-                pieces
-            );
-    }
-
-    private static string? FindFirstPromptText(
-        JsonElement element
-    )
-    {
-        if (
-            element.ValueKind
-            ==
-            JsonValueKind.Object
-        )
-        {
-            if (
-                element.TryGetProperty(
-                    "prompt",
-                    out var prompt
-                )
-                &&
-                prompt.ValueKind
-                ==
-                JsonValueKind.Object
-                &&
-                prompt.TryGetProperty(
-                    "text",
-                    out var text
-                )
-            )
-            {
-                return
-                    text.GetString();
-            }
-
-            foreach (
-                var property
-                in
-                element.EnumerateObject()
-            )
-            {
-                var found =
-                    FindFirstPromptText(
-                        property.Value
-                    );
-
-                if (
-                    !string.IsNullOrWhiteSpace(
-                        found
-                    )
-                )
-                {
-                    return found;
-                }
-            }
-        }
-        else if (
-            element.ValueKind
-            ==
-            JsonValueKind.Array
-        )
-        {
-            foreach (
-                var item
-                in
-                element.EnumerateArray()
-            )
-            {
-                var found =
-                    FindFirstPromptText(
-                        item
-                    );
-
-                if (
-                    !string.IsNullOrWhiteSpace(
-                        found
-                    )
-                )
-                {
-                    return found;
-                }
-            }
-        }
-
-        return null;
-    }
 
     private void CollectLinks(
         JsonElement element,
@@ -4084,16 +3637,6 @@ public sealed class GuideDatabase
                                 query
                             )
                         ||
-                        node.HumanCondition.Contains(
-                            query,
-                            StringComparison.OrdinalIgnoreCase
-                        )
-                        ||
-                        node.HumanOutcome.Contains(
-                            query,
-                            StringComparison.OrdinalIgnoreCase
-                        )
-                        ||
                         (
                             node.ResultText
                                 ?.Contains(
@@ -4102,6 +3645,22 @@ public sealed class GuideDatabase
                                 )
                             ??
                             false
+                        )
+                        ||
+                        node.IncomingRelations.Any(
+                            relation =>
+                                relation.NodeName.Contains(
+                                    query,
+                                    StringComparison.OrdinalIgnoreCase
+                                )
+                        )
+                        ||
+                        node.OutgoingRelations.Any(
+                            relation =>
+                                relation.NodeName.Contains(
+                                    query,
+                                    StringComparison.OrdinalIgnoreCase
+                                )
                         )
                 );
         }
