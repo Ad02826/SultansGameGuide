@@ -721,7 +721,7 @@ public sealed class GuideOverlay : MonoBehaviour
                 330,
                 22
             ),
-            "v0.4.7 · 长文本布局修复",
+            "v0.4.7a · 长文本布局修复",
             _small
         );
 
@@ -2245,9 +2245,6 @@ public sealed class GuideOverlay : MonoBehaviour
 
             _body.wordWrap =
                 true;
-
-            _body.clipping =
-                TextClipping.Clip;
 
             _body
                 .normal
