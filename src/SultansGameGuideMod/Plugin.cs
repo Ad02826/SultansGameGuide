@@ -6,7 +6,7 @@ namespace SultansGameGuide;
 [BepInPlugin(
     "wharman.sultansgame.guide",
     "苏丹的游戏·攻略助手",
-    "0.4.89"
+    "0.4.92"
 )]
 public sealed class Plugin : BasePlugin
 {
