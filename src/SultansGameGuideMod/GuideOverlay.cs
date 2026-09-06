@@ -111,6 +111,8 @@ public sealed class GuideOverlay : MonoBehaviour
     private static GUIStyle? _softBoxStyle;
     private static GUIStyle? _triggerTitleStyle;
     private static GUIStyle? _statusTitleStyle;
+    private static GUIStyle? _branchHeaderLineStyle;
+    private static GUIStyle? _statusLineStyle;
     private static GUIStyle? _activeButtonStyle;
     private static GUIStyle? _selectedButtonStyle;
 
@@ -1113,7 +1115,7 @@ public sealed class GuideOverlay : MonoBehaviour
                 330,
                 22
             ),
-            "v0.4.99 · 状态符号回退与标题精简",
+            "v0.5.0 · 状态符号同基线根治",
             _small
         );
 
@@ -2153,39 +2155,25 @@ public sealed class GuideOverlay : MonoBehaviour
                         :
                         "▶";
 
-                GUI.Label(
-                    new Rect(
-                        headerX + 8f,
-                        headerY + 6f,
-                        18f,
-                        24f
-                    ),
-                    arrow,
-                    _body
-                );
-
-                DrawConditionStateIcon(
-                    new Rect(
-                        headerX + 28f,
-                        headerY + 4f,
-                        22f,
-                        28f
-                    ),
-                    state
-                );
+                string branchHeaderText =
+                    arrow
+                    +
+                    "  "
+                    +
+                    BuildStateRichText(
+                        state
+                    )
+                    +
+                    "  "
+                    +
+                    EscapeRichTextDisplay(
+                        branch.Name
+                    );
 
                 GUI.Label(
-                    new Rect(
-                        headerX + 54f,
-                        headerY + 4f,
-                        Math.Max(
-                            40f,
-                            headerW - 62f
-                        ),
-                        28f
-                    ),
-                    branch.Name,
-                    _body
+                    buttonRect,
+                    branchHeaderText,
+                    _branchHeaderLineStyle
                 );
 
                 cy =
@@ -2729,31 +2717,28 @@ public sealed class GuideOverlay : MonoBehaviour
             rows.Count > 0
         )
         {
+            string statusText =
+                "当前状态  "
+                +
+                BuildStateRichText(
+                    GetConditionRowsOverallState(
+                        rows
+                    )
+                );
+
             GUI.Label(
                 new Rect(
                     innerX,
                     cy,
-                    76f,
-                    22f
-                ),
-                "当前状态",
-                _statusTitleStyle
-            );
-
-            DrawConditionStateIcon(
-                new Rect(
-                    innerX + 76f,
-                    cy - 1f,
-                    24f,
+                    innerW,
                     24f
                 ),
-                GetConditionRowsOverallState(
-                    rows
-                )
+                statusText,
+                _statusLineStyle
             );
 
             cy +=
-                22f;
+                24f;
 
             foreach (
                 var row
@@ -2952,69 +2937,52 @@ public sealed class GuideOverlay : MonoBehaviour
                 ConditionRuntimeState.Met;
     }
 
-    private static void DrawConditionStateIcon(
-        Rect rect,
+    private static string BuildStateRichText(
         ConditionRuntimeState state
     )
     {
-        string symbol =
+        return
             state switch
             {
                 ConditionRuntimeState.Met =>
-                    "✓",
+                    "<color=#3ED36B><b>✓</b></color>",
 
                 ConditionRuntimeState.Unmet =>
-                    "✗",
+                    "<color=#F0474F><b>✗</b></color>",
 
                 _ =>
-                    "?"
+                    "<color=#B7BEC7><b>?</b></color>"
             };
+    }
 
-        var style =
-            new GUIStyle();
+    private static string EscapeRichTextDisplay(
+        string? text
+    )
+    {
+        if (
+            string.IsNullOrEmpty(
+                text
+            )
+        )
+        {
+            return
+                "";
+        }
 
-        style.fontSize =
-            16;
-
-        style.fontStyle =
-            FontStyle.Bold;
-
-        style.alignment =
-            TextAnchor.MiddleCenter;
-
-        style.normal.textColor =
-            state switch
-            {
-                ConditionRuntimeState.Met =>
-                    new Color(
-                        0.23f,
-                        0.82f,
-                        0.39f,
-                        1f
-                    ),
-
-                ConditionRuntimeState.Unmet =>
-                    new Color(
-                        0.95f,
-                        0.27f,
-                        0.31f,
-                        1f
-                    ),
-
-                _ =>
-                    new Color(
-                        0.73f,
-                        0.77f,
-                        0.82f,
-                        1f
-                    )
-            };
-
-        GUI.Label(
-            rect,
-            symbol,
-            style
-        );
+        // Unity IMGUI richText 对 <...> 会按标签解析。
+        // 分支名如果恰好带尖括号，就替换成全角字符，避免误吞文字。
+        return
+            text
+                .Replace(
+                    "<",
+                    "＜",
+                    StringComparison.Ordinal
+                )
+                .Replace(
+                    ">",
+                    "＞",
+                    StringComparison.Ordinal
+                );
     }
 
     private static ConditionRuntimeState EvaluateTriggerBranch(
@@ -4292,6 +4260,73 @@ public sealed class GuideOverlay : MonoBehaviour
                 FontStyle.Bold;
 
             _statusTitleStyle
+                .normal
+                .textColor =
+                    new Color(
+                        0.66f,
+                        0.76f,
+                        0.84f,
+                        1f
+                    );
+        }
+
+        if (
+            _branchHeaderLineStyle
+            ==
+            null
+        )
+        {
+            _branchHeaderLineStyle =
+                new GUIStyle();
+
+            _branchHeaderLineStyle.fontSize =
+                13;
+
+            _branchHeaderLineStyle.fontStyle =
+                FontStyle.Normal;
+
+            _branchHeaderLineStyle.alignment =
+                TextAnchor.MiddleLeft;
+
+            _branchHeaderLineStyle.richText =
+                true;
+
+            _branchHeaderLineStyle.padding =
+                new RectOffset(
+                    8,
+                    8,
+                    0,
+                    0
+                );
+
+            _branchHeaderLineStyle
+                .normal
+                .textColor =
+                    Color.white;
+        }
+
+        if (
+            _statusLineStyle
+            ==
+            null
+        )
+        {
+            _statusLineStyle =
+                new GUIStyle();
+
+            _statusLineStyle.fontSize =
+                12;
+
+            _statusLineStyle.fontStyle =
+                FontStyle.Bold;
+
+            _statusLineStyle.alignment =
+                TextAnchor.MiddleLeft;
+
+            _statusLineStyle.richText =
+                true;
+
+            _statusLineStyle
                 .normal
                 .textColor =
                     new Color(
