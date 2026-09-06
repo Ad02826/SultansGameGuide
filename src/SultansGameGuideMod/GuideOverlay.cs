@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using BepInEx.Logging;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.UI;
 
 namespace SultansGameGuide;
 
@@ -58,10 +59,12 @@ public sealed class GuideOverlay : MonoBehaviour
     private static bool _dragging = false;
     private static Vector2 _dragOffset = Vector2.zero;
 
-    // 当鼠标在攻略窗口上时，临时关闭游戏 EventSystem，
-    // 防止点击攻略窗口同时点到下面的游戏 UI。
-    private static EventSystem? _suppressedEventSystem;
-    private static bool _gameUiSuppressed = false;
+    // 独立的透明 UGUI 射线挡板：
+    // 只覆盖攻略助手自身区域，拦截游戏 UI 的点击，
+    // 但绝不关闭游戏自己的 EventSystem。
+    private static GameObject? _inputBlockerRoot;
+    private static RectTransform? _inputBlockerRect;
+    private static Image? _inputBlockerImage;
 
     private static GUIStyle? _title;
     private static GUIStyle? _subTitle;
@@ -124,6 +127,8 @@ public sealed class GuideOverlay : MonoBehaviour
                 }
             }
 
+            EnsureInputBlocker();
+
             Log.LogInfo(
                 "GuideOverlay.Start invoked"
             );
@@ -149,12 +154,14 @@ public sealed class GuideOverlay : MonoBehaviour
 
     private void OnDestroy()
     {
-        RestoreGameUiInput();
+        DestroyInputBlocker();
     }
 
     private void OnDisable()
     {
-        RestoreGameUiInput();
+        SetInputBlockerVisible(
+            false
+        );
     }
 
     private void OnGUI()
@@ -182,7 +189,7 @@ public sealed class GuideOverlay : MonoBehaviour
 
             if (!_visible)
             {
-                RestoreGameUiInput();
+                SetInputBlockerVisible(false);
             }
 
             e.Use();
@@ -192,8 +199,6 @@ public sealed class GuideOverlay : MonoBehaviour
 
         if (!_visible)
         {
-            RestoreGameUiInput();
-
             Rect openRect =
                 new Rect(
                     220,
@@ -201,6 +206,10 @@ public sealed class GuideOverlay : MonoBehaviour
                     118,
                     38
                 );
+
+            UpdateInputBlockerRect(
+                openRect
+            );
 
             if (
                 GUI.Button(
@@ -218,8 +227,6 @@ public sealed class GuideOverlay : MonoBehaviour
 
         if (_minimized)
         {
-            RestoreGameUiInput();
-
             Rect miniRect =
                 new Rect(
                     220,
@@ -227,6 +234,10 @@ public sealed class GuideOverlay : MonoBehaviour
                     138,
                     40
                 );
+
+            UpdateInputBlockerRect(
+                miniRect
+            );
 
             if (
                 GUI.Button(
@@ -258,8 +269,8 @@ public sealed class GuideOverlay : MonoBehaviour
                 e.mousePosition
             );
 
-        SetGameUiSuppressed(
-            mouseInside
+        UpdateInputBlockerRect(
+            _panel
         );
 
         DrawPanel();
@@ -306,25 +317,201 @@ public sealed class GuideOverlay : MonoBehaviour
             EventType.ScrollWheel;
     }
 
-    private static void SetGameUiSuppressed(
-        bool suppress
-    )
+    private static void EnsureInputBlocker()
     {
-        // 不再修改 EventSystem.current.enabled。
-        // Sultan's Game 的部分 UI 逻辑默认 EventSystem 始终有效；
-        // 临时禁用它会让游戏自己的 UI 脚本出现空引用。
-        //
-        // 防穿透继续依靠 OnGUI 末尾 e.Use() 吃掉鼠标事件。
+        if (
+            _inputBlockerRoot != null
+            &&
+            _inputBlockerRect != null
+            &&
+            _inputBlockerImage != null
+        )
+        {
+            return;
+        }
+
+        try
+        {
+            _inputBlockerRoot =
+                new GameObject(
+                    "SultanGuideInputBlocker"
+                );
+
+            UnityEngine.Object.DontDestroyOnLoad(
+                _inputBlockerRoot
+            );
+
+            var canvas =
+                _inputBlockerRoot
+                    .AddComponent<Canvas>();
+
+            canvas.renderMode =
+                RenderMode.ScreenSpaceOverlay;
+
+            canvas.sortingOrder =
+                32760;
+
+            _inputBlockerRoot
+                .AddComponent<GraphicRaycaster>();
+
+            var blocker =
+                new GameObject(
+                    "BlockerRect"
+                );
+
+            blocker.transform.SetParent(
+                _inputBlockerRoot.transform,
+                false
+            );
+
+            _inputBlockerRect =
+                blocker
+                    .AddComponent<RectTransform>();
+
+            _inputBlockerRect.anchorMin =
+                new Vector2(
+                    0f,
+                    0f
+                );
+
+            _inputBlockerRect.anchorMax =
+                new Vector2(
+                    0f,
+                    0f
+                );
+
+            _inputBlockerRect.pivot =
+                new Vector2(
+                    0f,
+                    0f
+                );
+
+            _inputBlockerImage =
+                blocker
+                    .AddComponent<Image>();
+
+            // 必须有 Graphic 才能参与 GraphicRaycaster；
+            // alpha 极低，视觉上仍然完全透明。
+            _inputBlockerImage.color =
+                new Color(
+                    0f,
+                    0f,
+                    0f,
+                    0.001f
+                );
+
+            _inputBlockerImage.raycastTarget =
+                true;
+
+            SetInputBlockerVisible(
+                false
+            );
+
+            Log.LogInfo(
+                "UI raycast blocker ready"
+            );
+        }
+        catch (Exception ex)
+        {
+            Log.LogWarning(
+                "Create input blocker failed: "
+                +
+                ex.Message
+            );
+
+            DestroyInputBlocker();
+        }
     }
 
-    private static void RestoreGameUiInput()
+    private static void UpdateInputBlockerRect(
+        Rect guiRect
+    )
     {
-        // v0.4.72 起不再操作游戏 EventSystem。
-        _suppressedEventSystem =
+        EnsureInputBlocker();
+
+        if (
+            _inputBlockerRoot == null
+            ||
+            _inputBlockerRect == null
+        )
+        {
+            return;
+        }
+
+        // IMGUI 原点在左上角；
+        // ScreenSpaceOverlay RectTransform 原点按左下角换算。
+        float bottomY =
+            Screen.height
+            -
+            guiRect.y
+            -
+            guiRect.height;
+
+        _inputBlockerRect.anchoredPosition =
+            new Vector2(
+                guiRect.x,
+                bottomY
+            );
+
+        _inputBlockerRect.sizeDelta =
+            new Vector2(
+                guiRect.width,
+                guiRect.height
+            );
+
+        SetInputBlockerVisible(
+            true
+        );
+    }
+
+    private static void SetInputBlockerVisible(
+        bool visible
+    )
+    {
+        if (
+            _inputBlockerRoot == null
+        )
+        {
+            return;
+        }
+
+        if (
+            _inputBlockerRoot.activeSelf
+            !=
+            visible
+        )
+        {
+            _inputBlockerRoot.SetActive(
+                visible
+            );
+        }
+    }
+
+    private static void DestroyInputBlocker()
+    {
+        try
+        {
+            if (
+                _inputBlockerRoot != null
+            )
+            {
+                UnityEngine.Object.Destroy(
+                    _inputBlockerRoot
+                );
+            }
+        }
+        catch
+        {
+        }
+
+        _inputBlockerImage =
             null;
 
-        _gameUiSuppressed =
-            false;
+        _inputBlockerRect =
+            null;
+
+        _inputBlockerRoot =
+            null;
     }
 
     // ============================================================
@@ -675,7 +862,7 @@ public sealed class GuideOverlay : MonoBehaviour
                 330,
                 22
             ),
-            "v0.4.72 · EventSystem兼容修复",
+            "v0.4.73 · 区域点击拦截",
             _small
         );
 
@@ -694,7 +881,7 @@ public sealed class GuideOverlay : MonoBehaviour
             _minimized =
                 true;
 
-            RestoreGameUiInput();
+            SetInputBlockerVisible(false);
         }
 
         if (
@@ -712,7 +899,7 @@ public sealed class GuideOverlay : MonoBehaviour
             _visible =
                 false;
 
-            RestoreGameUiInput();
+            SetInputBlockerVisible(false);
         }
 
         GUI.Label(

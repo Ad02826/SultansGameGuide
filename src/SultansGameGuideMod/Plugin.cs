@@ -6,7 +6,7 @@ namespace SultansGameGuide;
 [BepInPlugin(
     "wharman.sultansgame.guide",
     "苏丹的游戏·攻略助手",
-    "0.4.72"
+    "0.4.73"
 )]
 public sealed class Plugin : BasePlugin
 {
@@ -16,7 +16,7 @@ public sealed class Plugin : BasePlugin
             AddComponent<GuideOverlay>();
 
         Log.LogInfo(
-            "苏丹攻略助手 0.4.72 已加载：不透明防穿透 + 自动跟随当前剧情"
+            "苏丹攻略助手 0.4.73 已加载：不透明防穿透 + 自动跟随当前剧情"
         );
 
         Log.LogInfo(
